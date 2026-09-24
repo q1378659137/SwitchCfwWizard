@@ -1,0 +1,1156 @@
+<Window x:Class="SwitchCfwWizard.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:SwitchCfwWizard.Converters"
+        xmlns:loc="clr-namespace:SwitchCfwWizard.Localization"
+        xmlns:vm="clr-namespace:SwitchCfwWizard.ViewModels"
+        Title="{loc:Loc App.Title}"
+        Icon="/ico.ico"
+        Width="1220"
+        Height="880"
+        MinWidth="1000"
+        MinHeight="720"
+        Background="{DynamicResource AppBackgroundBrush}"
+        FontFamily="Microsoft YaHei UI, Segoe UI, Meiryo"
+        WindowStartupLocation="CenterScreen"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+
+    <Window.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <conv:InverseBoolConverter x:Key="InvBool" />
+        <conv:StringToVisibilityConverter x:Key="StrToVis" />
+        <conv:LogLevelToBrushConverter x:Key="LogBrush" />
+        <conv:ProgressToBrushConverter x:Key="ProgressBrush" />
+
+        <!-- ══ 单个配置项 ══════════════════════════════════════ -->
+        <DataTemplate x:Key="OptionTemplate" DataType="{x:Type vm:OptionViewModel}">
+            <Grid Margin="0,3" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVis}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Label}" Style="{StaticResource BodyText}" />
+                    <TextBlock Text="{Binding Description}"
+                               Style="{StaticResource HintText}"
+                               Margin="0,1,0,0"
+                               Visibility="{Binding HasDescription, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
+
+                <CheckBox Grid.Column="1"
+                          VerticalAlignment="Center"
+                          IsChecked="{Binding BoolValue}"
+                          Visibility="{Binding IsCheckBox, Converter={StaticResource BoolToVis}}" />
+
+                <ComboBox Grid.Column="1"
+                          Width="200"
+                          ItemsSource="{Binding Choices}"
+                          SelectedItem="{Binding SelectedChoice}"
+                          DisplayMemberPath="Label"
+                          Visibility="{Binding IsComboBox, Converter={StaticResource BoolToVis}}" />
+
+                <TextBox Grid.Column="1"
+                         Width="200"
+                         Text="{Binding TextValue, UpdateSourceTrigger=PropertyChanged}"
+                         Visibility="{Binding IsText, Converter={StaticResource BoolToVis}}" />
+            </Grid>
+        </DataTemplate>
+
+        <!-- ══ 配置项分组 ══════════════════════════════════════ -->
+        <DataTemplate x:Key="OptionGroupTemplate" DataType="{x:Type vm:OptionGroupViewModel}">
+            <StackPanel Margin="0,8,0,2">
+                <TextBlock Text="{Binding Header}" Style="{StaticResource SectionHeaderText}" FontSize="12" />
+                <ItemsControl ItemsSource="{Binding Options}" ItemTemplate="{StaticResource OptionTemplate}" />
+            </StackPanel>
+        </DataTemplate>
+
+        <!-- ══ 单个下载文件 ════════════════════════════════════ -->
+        <DataTemplate x:Key="AssetTemplate" DataType="{x:Type vm:AssetViewModel}">
+            <Grid Margin="0,5,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Grid.Column="0"
+                           Text="{Binding DisplayName}"
+                           Style="{StaticResource CaptionText}"
+                           TextTrimming="CharacterEllipsis"
+                           ToolTip="{Binding DisplayName}" />
+                <TextBlock Grid.Row="0" Grid.Column="1"
+                           Text="{Binding Status}"
+                           Style="{StaticResource HintText}"
+                           Margin="8,0,0,0" />
+
+                <ProgressBar Grid.Row="1" Grid.ColumnSpan="2"
+                             Style="{StaticResource FlatProgressBar}"
+                             Height="5"
+                             Margin="0,3,0,0"
+                             Value="{Binding Progress, Mode=OneWay}"
+                             Foreground="{Binding Progress, Converter={StaticResource ProgressBrush}}" />
+
+                <TextBlock Grid.Row="2" Grid.ColumnSpan="2"
+                           Text="{Binding Detail}"
+                           Style="{StaticResource HintText}"
+                           Margin="0,2,0,0" />
+            </Grid>
+        </DataTemplate>
+
+        <!-- ══ 组件卡片 ════════════════════════════════════════ -->
+        <DataTemplate x:Key="ComponentTemplate" DataType="{x:Type vm:ComponentViewModel}">
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <CheckBox Grid.Column="0"
+                                  Margin="0,1,10,0"
+                                  VerticalAlignment="Top"
+                                  IsChecked="{Binding IsSelected}"
+                                  IsEnabled="{Binding IsSelectable}" />
+
+                        <StackPanel Grid.Column="1">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Title}"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimaryBrush}"
+                                           VerticalAlignment="Center" />
+                                <Border Style="{StaticResource Badge}"
+                                        Margin="8,0,0,0"
+                                        Visibility="{Binding HasVersion, Converter={StaticResource BoolToVis}}">
+                                    <TextBlock Style="{StaticResource BadgeText}">
+                                        <Run Text="{Binding VersionText, Mode=OneWay}" />
+                                        <Run Text=" · " />
+                                        <Run Text="{Binding ChannelText, Mode=OneWay}" />
+                                    </TextBlock>
+                                </Border>
+                            </StackPanel>
+                            <TextBlock Text="{Binding Description}"
+                                       Style="{StaticResource CaptionText}"
+                                       Margin="0,3,0,0" />
+
+                            <!-- 复选框被锁定时说明原因，别让用户对着灰掉的框猜 -->
+                            <TextBlock Text="{Binding LockHint}"
+                                       Style="{StaticResource HintText}"
+                                       Foreground="{DynamicResource WarningBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0"
+                                       Visibility="{Binding HasLockHint, Converter={StaticResource BoolToVis}}" />
+
+                            <!-- 与另一个勾了的组件装同一个 sysmodule title：能选，但不该同时选。
+                                 和「锁定提示」分开显示 —— 一个是「点不了」，一个是「点了会互相覆盖」。 -->
+                            <TextBlock Text="{Binding ConflictHint}"
+                                       Style="{StaticResource HintText}"
+                                       Foreground="{DynamicResource WarningBrush}"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0"
+                                       Visibility="{Binding HasConflictHint, Converter={StaticResource BoolToVis}}" />
+                        </StackPanel>
+
+                        <TextBlock Grid.Column="2"
+                                   Text="{Binding Status}"
+                                   Style="{StaticResource HintText}"
+                                   VerticalAlignment="Top"
+                                   Margin="8,2,0,0" />
+                    </Grid>
+
+                    <ProgressBar Style="{StaticResource FlatProgressBar}"
+                                 Margin="0,10,0,0"
+                                 Value="{Binding Progress, Mode=OneWay}" />
+
+                    <ItemsControl ItemsSource="{Binding Assets}"
+                                  ItemTemplate="{StaticResource AssetTemplate}"
+                                  Margin="0,4,0,0" />
+
+                    <Expander Header="{loc:Loc Common.Options}"
+                              Visibility="{Binding HasOptions, Converter={StaticResource BoolToVis}}">
+                        <ItemsControl ItemsSource="{Binding OptionGroups}"
+                                      ItemTemplate="{StaticResource OptionGroupTemplate}"
+                                      Margin="0,4,0,0" />
+                    </Expander>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+
+        <!--
+            一个分类「文件夹」：组标题 + 该组下的组件卡片。
+            组内卡片仍用 ComponentTemplate，所以加分组没有改动单张卡片的样子。
+        -->
+        <DataTemplate x:Key="ComponentCategoryTemplate" DataType="{x:Type vm:ComponentCategoryViewModel}">
+            <StackPanel Margin="0,0,0,4">
+                <TextBlock Text="{Binding Title}"
+                           Style="{StaticResource SectionHeaderText}"
+                           Margin="0,8,0,6" />
+                <ItemsControl ItemsSource="{Binding Components}"
+                              ItemTemplate="{StaticResource ComponentTemplate}" />
+
+                <!-- boot.dat 的开关搬到这里（用户 2026-09-21 要求从「输出内容」移过来）：
+                     boot.dat 是框架这一层要摆进 SD 卡根目录的东西，与上面那几张框架卡片同类。
+                     它只挂在「框架」这一组上（IsFramework），别的组不该多出这一张。
+                     ⚠️ 绑定要跨出本模板的 DataContext（这里是 ComponentCategoryViewModel）
+                     到窗口的 DataContext（MainViewModel），所以显式写 RelativeSource ——
+                     不写的话会去 ComponentCategoryViewModel 上找 IncludeBootDat，静默绑到空值。 -->
+                <Border Style="{StaticResource Card}"
+                        Visibility="{Binding IsFramework, Converter={StaticResource BoolToVis}}">
+                    <StackPanel>
+                        <!-- 排法与组件卡片（用户指的 Sys-patch 那张）**逐项对齐**（用户 2026-09-22 要求
+                             「字体以 Sys-patch 那张卡片为准」）：勾选框（无文字）│ 标题 + 说明 │ 状态文字。
+                             与 ComponentTemplate 的头部一字不差，于是它看起来就是同一组里的一张卡片，
+                             而不是「一张长得像卡片的别的东西」。
+                             ⚠️ 勾选框的 Content 是**空的**：标题改由右边那个 TextBlock 承担 ——
+                             CheckBox 的内容会继承它自己的字号（12.5），放在里面永远得不到 14/SemiBold。 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <CheckBox Grid.Column="0"
+                                      Margin="0,1,10,0"
+                                      VerticalAlignment="Top"
+                                      IsChecked="{Binding DataContext.IncludeBootDat, RelativeSource={RelativeSource AncestorType=Window}}" />
+
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="{loc:Loc App.Framework.BootDat}"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="{DynamicResource TextPrimaryBrush}"
+                                           VerticalAlignment="Center" />
+                                <TextBlock Text="{loc:Loc App.Framework.BootDat.Desc}"
+                                           Style="{StaticResource CaptionText}"
+                                           Margin="0,3,0,0" />
+                            </StackPanel>
+
+                            <!-- 状态文字放组件卡片那个位置（右上角、HintText），「未勾选」因此与组件卡片一模一样。
+                                 文字由 BootDatStatusText 保证**永不为空** —— 一条 0% 的进度条配一行空白，
+                                 看上去就像卡片坏了。
+                                 ⚠️ MaxWidth 是刻意的：下载中那句话比组件卡片的状态长得多
+                                 （「11.3 MB / 1.2 MB/s · 剩余 3 秒」），而这一列是 Auto，
+                                 不设上限就会把左边那两行挤变形。 -->
+                            <TextBlock Grid.Column="2"
+                                       Text="{Binding DataContext.BootDatStatusText, RelativeSource={RelativeSource AncestorType=Window}}"
+                                       Style="{StaticResource HintText}"
+                                       VerticalAlignment="Top"
+                                       MaxWidth="200"
+                                       Margin="8,2,0,0" />
+                        </Grid>
+
+                        <!-- 进度条：与组件卡片同位置、同粗细（那边也是 FlatProgressBar 的默认高度）。
+                             始终显示（用户 2026-09-22 要求），不再按「有没有下过」隐藏。 -->
+                        <ProgressBar Style="{StaticResource FlatProgressBar}"
+                                     Margin="0,10,0,0"
+                                     Value="{Binding DataContext.BootDatProgress, RelativeSource={RelativeSource AncestorType=Window}, Mode=OneWay}" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid Margin="16,14,16,14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="190" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- ══ 顶部标题栏 ══════════════════════════════════════ -->
+        <Grid Grid.Row="0" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <TextBlock Text="{loc:Loc App.Title}" Style="{StaticResource TitleText}" />
+                <TextBlock Text="{loc:Loc App.Subtitle}"
+                           Style="{StaticResource CaptionText}"
+                           Margin="0,3,0,0" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Text="{loc:Loc App.Language}"
+                           Style="{StaticResource CaptionText}"
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0" />
+                <ComboBox Width="150"
+                          ItemsSource="{Binding Languages}"
+                          SelectedItem="{Binding SelectedLanguage}"
+                          DisplayMemberPath="DisplayName" />
+
+                <!-- 主题紧挨着语言：两者都是「界面偏好」，放在同一处比塞进高级设置更好找。
+                     改动立刻生效（SelectedTheme 的 setter 里就应用），落盘走自动落盘。 -->
+                <TextBlock Text="{loc:Loc App.Theme}"
+                           Style="{StaticResource CaptionText}"
+                           VerticalAlignment="Center"
+                           Margin="14,0,8,0" />
+                <ComboBox Width="132"
+                          ItemsSource="{Binding Themes}"
+                          SelectedItem="{Binding SelectedTheme}"
+                          DisplayMemberPath="DisplayName" />
+
+                <!-- 版本号 + 检查更新：与「界面偏好」并排放在标题栏 ——
+                     它回答的是「我这个程序要不要换一个」，与某一轮生成无关，
+                     塞进默认折叠的高级设置里，点了也看不见结果。
+                     ⚠️ 结论就地显示（UpdateStatus），且**限宽换行**：下载路径可能很长，
+                     不限制会把标题栏顶变形。详细路径与失败原因同时进日志面板。 -->
+                <TextBlock Text="{Binding CurrentVersionText, StringFormat=v{0}}"
+                           Style="{StaticResource CaptionText}"
+                           VerticalAlignment="Center"
+                           Margin="14,0,8,0" />
+                <Button Content="{loc:Loc App.CheckUpdate}"
+                        Style="{StaticResource SecondaryButton}"
+                        Padding="8,4"
+                        VerticalAlignment="Center"
+                        Command="{Binding CheckUpdateCommand}" />
+                <TextBlock Text="{Binding UpdateStatus}"
+                           Style="{StaticResource HintText}"
+                           VerticalAlignment="Center"
+                           MaxWidth="220"
+                           TextWrapping="Wrap"
+                           Margin="8,0,0,0"
+                           Visibility="{Binding HasUpdateStatus, Converter={StaticResource BoolToVis}}" />
+
+                <!-- 下载百分比（用户 2026-09-22 要求「在版本更新的后方增加下载百分比」）：
+                     只在**真的在下载**那段时间出现 —— 查完发现已是最新版时还留一个「0%」，
+                     会让人以为它还在下。MinWidth 是为了 1% → 100% 之间别把旁边那行结论来回顶。 -->
+                <TextBlock Text="{Binding UpdateProgressText}"
+                           Style="{StaticResource HintText}"
+                           VerticalAlignment="Center"
+                           MinWidth="36"
+                           Margin="4,0,0,0"
+                           Visibility="{Binding IsUpdateDownloading, Converter={StaticResource BoolToVis}}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- ══ 主体：组件列表 + 全局选项 ═══════════════════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" MinWidth="520" />
+                <ColumnDefinition Width="14" />
+                <ColumnDefinition Width="392" />
+            </Grid.ColumnDefinitions>
+
+            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
+                <StackPanel>
+                    <!-- 首次运行默认不勾任何组件，此时「开始」按钮是灰的。用户点不动那个按钮，
+                         也就永远看不到 RunAsync 里那句提示，只能对着灰按钮猜。这里直接把原因说出来，
+                         勾上任意一个组件就自动消失。 -->
+                    <Border Style="{StaticResource Card}"
+                            Margin="0,0,0,10"
+                            Visibility="{Binding ShowNoSelectionHint, Converter={StaticResource BoolToVis}}">
+                        <TextBlock Text="{loc:Loc Common.NoSelection}"
+                                   Style="{StaticResource BodyText}"
+                                   Foreground="{DynamicResource WarningBrush}"
+                                   FontWeight="SemiBold"
+                                   TextWrapping="Wrap" />
+                    </Border>
+
+                    <ItemsControl ItemsSource="{Binding ComponentGroups}"
+                                  ItemTemplate="{StaticResource ComponentCategoryTemplate}" />
+                </StackPanel>
+            </ScrollViewer>
+
+            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" Padding="0,0,6,0">
+                <StackPanel>
+
+                    <!-- 引导进入系统 -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc Global.Section}" Style="{StaticResource SectionHeaderText}" />
+
+                            <TextBlock Text="{loc:Loc Global.BootEntries}"
+                                       Style="{StaticResource BodyText}"
+                                       FontWeight="SemiBold" />
+                            <TextBlock Text="{loc:Loc Global.BootEntries.Hint}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="0,2,0,8" />
+
+                            <CheckBox Content="{loc:Loc Global.Boot.Stock}" IsChecked="{Binding BootStock}" />
+                            <TextBlock Text="{loc:Loc Global.Boot.Stock.Desc}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="22,1,0,6" />
+                            <Grid Margin="22,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Name}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootStockTitle, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Name.Hint}" />
+                            </Grid>
+                            <Grid Margin="22,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Logo}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootStockLogo, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Logo.Hint}" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Browse}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Command="{Binding PickStockLogoCommand}" />
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Clear}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Margin="4,0,0,0"
+                                            Command="{Binding ClearStockLogoCommand}"
+                                            Visibility="{Binding HasBootStockLogo, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="22,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Icon}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootStockIcon, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Icon.Hint}" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Browse}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Command="{Binding PickStockIconCommand}" />
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Clear}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Margin="4,0,0,0"
+                                            Command="{Binding ClearStockIconCommand}"
+                                            Visibility="{Binding HasBootStockIcon, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+                            </Grid>
+
+                            <CheckBox Content="{loc:Loc Global.Boot.SysNand}" IsChecked="{Binding BootSysNand}" />
+                            <TextBlock Text="{loc:Loc Global.Boot.SysNand.Desc}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="22,1,0,6" />
+                            <Grid Margin="22,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Name}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootSysNandTitle, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Name.Hint}" />
+                            </Grid>
+                            <Grid Margin="22,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Logo}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootSysNandLogo, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Logo.Hint}" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Browse}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Command="{Binding PickSysNandLogoCommand}" />
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Clear}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Margin="4,0,0,0"
+                                            Command="{Binding ClearSysNandLogoCommand}"
+                                            Visibility="{Binding HasBootSysNandLogo, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="22,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Icon}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootSysNandIcon, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Icon.Hint}" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Browse}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Command="{Binding PickSysNandIconCommand}" />
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Clear}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Margin="4,0,0,0"
+                                            Command="{Binding ClearSysNandIconCommand}"
+                                            Visibility="{Binding HasBootSysNandIcon, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+                            </Grid>
+
+                            <CheckBox Content="{loc:Loc Global.Boot.EmuNand}" IsChecked="{Binding BootEmuNand}" />
+                            <TextBlock Text="{loc:Loc Global.Boot.EmuNand.Desc}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="22,1,0,6" />
+                            <Grid Margin="22,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Name}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootEmuNandTitle, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Name.Hint}" />
+                            </Grid>
+                            <Grid Margin="22,0,0,4">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Logo}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootEmuNandLogo, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Logo.Hint}" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Browse}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Command="{Binding PickEmuNandLogoCommand}" />
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Clear}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Margin="4,0,0,0"
+                                            Command="{Binding ClearEmuNandLogoCommand}"
+                                            Visibility="{Binding HasBootEmuNandLogo, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="22,0,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{loc:Loc Global.Boot.Icon}"
+                                           Style="{StaticResource HintText}"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1"
+                                         Text="{Binding BootEmuNandIcon, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="{loc:Loc Global.Boot.Icon.Hint}" />
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="6,0,0,0">
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Browse}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Command="{Binding PickEmuNandIconCommand}" />
+                                    <Button Content="{loc:Loc Global.Boot.Logo.Clear}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Margin="4,0,0,0"
+                                            Command="{Binding ClearEmuNandIconCommand}"
+                                            Visibility="{Binding HasBootEmuNandIcon, Converter={StaticResource BoolToVis}}" />
+                                </StackPanel>
+                            </Grid>
+
+                            <!-- 仅在勾选真实/虚拟破解系统时出现 -->
+                            <StackPanel Visibility="{Binding ShowSerialOptions, Converter={StaticResource BoolToVis}}">
+                                <Border Height="1"
+                                        Background="{DynamicResource DividerBrush}"
+                                        Margin="0,10,0,10" />
+
+                                <TextBlock Text="{loc:Loc Global.BlankSerial}"
+                                           Style="{StaticResource CaptionText}"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,6" />
+
+                                <!-- 两个屏蔽项互相独立，各自跟着对应的引导模式显示 -->
+                                <StackPanel Visibility="{Binding ShowSysmmcBlank, Converter={StaticResource BoolToVis}}">
+                                    <CheckBox Content="{loc:Loc Global.BlankSerial.SysNand}"
+                                              IsChecked="{Binding BlankSerialSysmmc}" />
+                                    <TextBlock Text="{loc:Loc Global.BlankSerial.SysNand.Desc}"
+                                               Style="{StaticResource HintText}"
+                                               Margin="22,1,0,10" />
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding ShowEmummcBlank, Converter={StaticResource BoolToVis}}">
+                                    <CheckBox Content="{loc:Loc Global.BlankSerial.EmuNand}"
+                                              IsChecked="{Binding BlankSerialEmummc}" />
+                                    <TextBlock Text="{loc:Loc Global.BlankSerial.EmuNand.Desc}"
+                                               Style="{StaticResource HintText}"
+                                               Margin="22,1,0,10" />
+                                </StackPanel>
+
+                                <!-- 两个 90DNS 项互相独立，各自跟着对应的引导模式显示（与上面的屏蔽序列号同一套规矩） -->
+                                <StackPanel Visibility="{Binding ShowSysmmcDns, Converter={StaticResource BoolToVis}}">
+                                    <CheckBox Content="{loc:Loc Global.Dns90.SysNand}"
+                                              IsChecked="{Binding Use90DnsSysmmc}" />
+                                    <TextBlock Text="{loc:Loc Global.Dns90.SysNand.Desc}"
+                                               Style="{StaticResource HintText}"
+                                               Margin="22,1,0,10" />
+                                </StackPanel>
+
+                                <StackPanel Visibility="{Binding ShowEmummcDns, Converter={StaticResource BoolToVis}}">
+                                    <CheckBox Content="{loc:Loc Global.Dns90.EmuNand}"
+                                              IsChecked="{Binding Use90DnsEmummc}" />
+                                    <TextBlock Text="{loc:Loc Global.Dns90.EmuNand.Desc}"
+                                               Style="{StaticResource HintText}"
+                                               Margin="22,1,0,10" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <Border Height="1"
+                                    Background="{DynamicResource DividerBrush}"
+                                    Margin="0,10,0,10" />
+
+                            <CheckBox Content="{loc:Loc Global.Ram8Gb}" IsChecked="{Binding Ram8Gb}" />
+                            <TextBlock Text="{loc:Loc Global.Ram8Gb.Desc}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="22,1,0,0" />
+
+                            <Border Style="{StaticResource Badge}"
+                                    Background="{DynamicResource WarnBadgeBackgroundBrush}"
+                                    Margin="0,10,0,0"
+                                    Visibility="{Binding SysPatchForced, Converter={StaticResource BoolToVis}}">
+                                <TextBlock Text="{loc:Loc Component.SysPatch.ForcedHint}"
+                                           FontSize="11"
+                                           Foreground="{DynamicResource WarningBrush}"
+                                           TextWrapping="Wrap" />
+                            </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 输出与下载行为 -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc App.OutputContent}" Style="{StaticResource SectionHeaderText}" />
+
+                            <CheckBox Content="{loc:Loc App.OutputContent.Full}"
+                                      IsChecked="{Binding IncludeComponentFilesInOutput}" />
+                            <TextBlock Text="{loc:Loc App.OutputContent.Full.Desc}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="22,1,0,10" />
+
+                            <CheckBox Content="{loc:Loc App.OutputContent.Payloads}"
+                                      IsChecked="{Binding IncludePayloads}" />
+                            <TextBlock Text="{loc:Loc App.OutputContent.Payloads.Desc}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="22,1,0,10" />
+
+                            <CheckBox Content="{loc:Loc Global.PreferPreRelease}"
+                                      IsChecked="{Binding PreferPrerelease}" />
+                            <TextBlock Text="{loc:Loc Global.PreferPreRelease.Desc}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="22,1,0,0" />
+
+                            <CheckBox Content="{loc:Loc Global.AutoPackZip}"
+                                      IsChecked="{Binding AutoPackZip}"
+                                      Margin="0,10,0,0" />
+                            <TextBlock Text="{loc:Loc Global.AutoPackZip.Desc}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="22,1,0,0" />
+
+                            <Border Height="1"
+                                    Background="{DynamicResource DividerBrush}"
+                                    Margin="0,10,0,10" />
+
+                            <TextBlock Text="{loc:Loc App.DownloadDir}" Style="{StaticResource CaptionText}" />
+                            <TextBox Text="{Binding DownloadPath, Mode=OneWay}"
+                                     IsReadOnly="True"
+                                     Margin="0,3,0,8" />
+
+                            <TextBlock Text="{loc:Loc App.OutputDir}" Style="{StaticResource CaptionText}" />
+                            <TextBox Text="{Binding OutputPath, Mode=OneWay}"
+                                     IsReadOnly="True"
+                                     Margin="0,3,0,8" />
+
+                            <!--
+                                日志目录也摆出来：用户遇到问题时第一反应是「日志在哪」，
+                                靠他去翻安装目录不现实。提示文字里带**当天那个文件名**，
+                                于是他不必在一堆日志里猜该发哪一份。
+                            -->
+                            <TextBlock Text="{loc:Loc App.LogDir}" Style="{StaticResource CaptionText}" />
+                            <TextBox Text="{Binding LogFolder, Mode=OneWay}"
+                                     IsReadOnly="True"
+                                     Margin="0,3,0,3" />
+                            <TextBlock Text="{Binding LogFolderHint}"
+                                       Style="{StaticResource HintText}"
+                                       Margin="0,0,0,8" />
+
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="{loc:Loc App.OpenDownload}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding OpenDownloadCommand}" />
+                                <Button Content="{loc:Loc App.OpenOutput}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding OpenOutputCommand}"
+                                        Margin="8,0,0,0" />
+                                <Button Content="{loc:Loc App.OpenLogs}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding OpenLogsCommand}"
+                                        Margin="8,0,0,0" />
+                                <Button Content="{loc:Loc App.PackZip}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding PackZipCommand}"
+                                        Margin="8,0,0,0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 高级设置 -->
+                    <Border Style="{StaticResource Card}">
+                        <StackPanel>
+                            <Button Content="{loc:Loc Settings.Section}"
+                                    Style="{StaticResource LinkButton}"
+                                    HorizontalAlignment="Left"
+                                    Command="{Binding ToggleAdvancedCommand}" />
+
+                            <StackPanel Margin="0,8,0,0"
+                                        Visibility="{Binding ShowAdvancedSettings, Converter={StaticResource BoolToVis}}">
+
+                                <TextBlock Text="{loc:Loc Settings.GitHubToken}" Style="{StaticResource CaptionText}" />
+                                <TextBlock Text="{loc:Loc Settings.GitHubToken.Desc}"
+                                           Style="{StaticResource HintText}"
+                                           TextWrapping="Wrap" />
+                                <TextBox Text="{Binding GitHubToken, UpdateSourceTrigger=PropertyChanged}"
+                                         Margin="0,3,0,6" />
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Content="{loc:Loc Settings.GitHubToken.Open}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Command="{Binding OpenTokenPageCommand}" />
+                                    <Button Content="{loc:Loc Settings.GitHubToken.Verify}"
+                                            Style="{StaticResource SecondaryButton}"
+                                            Padding="8,4"
+                                            Margin="6,0,0,0"
+                                            Command="{Binding VerifyTokenCommand}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding TokenStatus}"
+                                           Style="{StaticResource HintText}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,4,0,0"
+                                           Visibility="{Binding HasTokenStatus, Converter={StaticResource BoolToVis}}" />
+
+                                <Border Height="1"
+                                        Background="{DynamicResource DividerBrush}"
+                                        Margin="0,10,0,10" />
+
+                                <TextBlock Text="{loc:Loc Settings.Timeout}" Style="{StaticResource CaptionText}" />
+                                <TextBox Text="{Binding TimeoutSeconds, UpdateSourceTrigger=PropertyChanged}"
+                                         Margin="0,3,0,8" />
+
+                                <TextBlock Text="{loc:Loc Settings.Proxy}" Style="{StaticResource CaptionText}" />
+                                <TextBlock Text="{loc:Loc Settings.Proxy.Desc}" Style="{StaticResource HintText}" />
+                                <TextBox Text="{Binding Proxy, UpdateSourceTrigger=PropertyChanged}"
+                                         Margin="0,3,0,8" />
+
+                                <!-- GitHub 镜像站：留空 = 走官方地址。填了之后**下载**直接走它；
+                                     版本查询仍先直连官方（镜像出口 IP 公用，未登录时反而更容易被限流），
+                                     连不上才改走它 —— 界面上那行提示把这件事写明。
+                                     格式不对时就地标红（MirrorIsInvalid），而不是等下载时才报：
+                                     填错的地址结构上完全合法，不拦的话只会得到一堆 404。 -->
+                                <TextBlock Text="{loc:Loc Settings.Mirror}" Style="{StaticResource CaptionText}" />
+                                <TextBlock Text="{loc:Loc Settings.Mirror.Desc}"
+                                           Style="{StaticResource HintText}"
+                                           TextWrapping="Wrap" />
+                                <TextBox Text="{Binding Mirror, UpdateSourceTrigger=PropertyChanged}"
+                                         Margin="0,3,0,4" />
+                                <!-- 紧挨着输入框：镜像站是这套加速能力里**唯一需要用户自己准备**的东西
+                                     （下载源、插件地址都有内置默认值），把「怎么搭」的入口放在填地址的地方，
+                                     用户不必自己去搜。 -->
+                                <Button Content="{loc:Loc Settings.Mirror.BuildGuide}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="8,4"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,0,0,4"
+                                        Command="{Binding OpenMirrorGuideCommand}" />
+                                <TextBlock Text="{loc:Loc Settings.Mirror.Invalid}"
+                                           Style="{StaticResource HintText}"
+                                           Foreground="{DynamicResource WarningBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,8"
+                                           Visibility="{Binding MirrorIsInvalid, Converter={StaticResource BoolToVis}}" />
+
+                                <Border Height="1"
+                                        Background="{DynamicResource DividerBrush}"
+                                        Margin="0,2,0,10" />
+
+                                <!-- boot.dat：不再内置在程序里，改为按这里的地址下载（留空 = 用默认地址）。
+                                     文案里必须写明「地址是网页形态、程序会自己换成 raw」，否则用户
+                                     把它改成一条 raw 地址时会怀疑「是不是我改错了」。 -->
+                                <TextBlock Text="{loc:Loc Settings.BootDatUrl}" Style="{StaticResource CaptionText}" />
+                                <TextBlock Text="{loc:Loc Settings.BootDatUrl.Desc}"
+                                           Style="{StaticResource HintText}"
+                                           TextWrapping="Wrap" />
+                                <!-- 框里那行「可以填成什么样」的提示：地址为空时显示（用户 2026-09-21 要求
+                                     把可填的样式写清楚）。用叠加的 TextBlock + IsHitTestVisible=False
+                                     （点击穿过去），而不是绑 TextBox 的 Text —— 理由见 BootDatUrlIsEmpty 的注释
+                                     （绑定护栏要求每个绑定名是本程序集的公开属性，而 Text 是 WPF 控件的属性）。 -->
+                                <Grid Margin="0,3,0,4">
+                                    <TextBox Text="{Binding BootDatUrl, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Text="{loc:Loc Settings.BootDatUrl.Placeholder}"
+                                               IsHitTestVisible="False"
+                                               Margin="8,6,8,0"
+                                               VerticalAlignment="Top"
+                                               TextTrimming="CharacterEllipsis"
+                                               Visibility="{Binding BootDatUrlIsEmpty, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource HintText}">
+                                                <!-- 与输入框里的字同样大小（HintText 默认 11 偏小），
+                                                     只用它的**颜色**（三级文字色）来表达「这是提示不是内容」。 -->
+                                                <Setter Property="FontSize" Value="12.5" />
+                                                <Setter Property="TextWrapping" Value="NoWrap" />
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                                <TextBlock Text="{loc:Loc Settings.BootDatUrl.Invalid}"
+                                           Style="{StaticResource HintText}"
+                                           Foreground="{DynamicResource WarningBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,8"
+                                           Visibility="{Binding BootDatUrlIsInvalid, Converter={StaticResource BoolToVis}}" />
+
+                                <!-- 检查更新查版本用的地址（留空 = 用默认地址）。 -->
+                                <TextBlock Text="{loc:Loc Settings.UpdateUrl}" Style="{StaticResource CaptionText}" />
+                                <TextBlock Text="{loc:Loc Settings.UpdateUrl.Desc}"
+                                           Style="{StaticResource HintText}"
+                                           TextWrapping="Wrap" />
+                                <!-- 框里那行「可以填成什么样」的提示：地址为空时显示（用户 2026-09-21 要求
+                                     把可填的样式写清楚）。用叠加的 TextBlock + IsHitTestVisible=False
+                                     （点击穿过去），而不是绑 TextBox 的 Text —— 理由见 BootDatUrlIsEmpty 的注释
+                                     （绑定护栏要求每个绑定名是本程序集的公开属性，而 Text 是 WPF 控件的属性）。 -->
+                                <!-- 与上面的「boot.dat 下载地址」那个框**同宽同对齐**（用户 2026-09-22 要求以它为
+                                     准，并当场否掉了「跟下载源行缩进对齐」那版：「前面空出来很多，有点难看」）：
+                                     两个框都是通栏 —— 左边缘贴着卡片左边、右边到卡片右边，尺寸逐像素一致。
+                                     ⚠️ 这里**不要**再加左缩进：「下载源」那些行左边有标签列（96px）、
+                                     这两个框没有，硬按那个列宽缩进只会让框白白变窄、前面空出一截。
+                                     判据见 App.xaml.cs 的 `box-parity`（比这两个框的左边缘与宽度）。 -->
+                                <Grid Margin="0,3,0,4">
+                                    <TextBox Text="{Binding UpdateUrl, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Text="{loc:Loc Settings.UpdateUrl.Placeholder}"
+                                               IsHitTestVisible="False"
+                                               Margin="8,6,8,0"
+                                               VerticalAlignment="Top"
+                                               TextTrimming="CharacterEllipsis"
+                                               Visibility="{Binding UpdateUrlIsEmpty, Converter={StaticResource BoolToVis}}">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource HintText}">
+                                                <!-- 与输入框里的字同样大小（HintText 默认 11 偏小），
+                                                     只用它的**颜色**（三级文字色）来表达「这是提示不是内容」。 -->
+                                                <Setter Property="FontSize" Value="12.5" />
+                                                <Setter Property="TextWrapping" Value="NoWrap" />
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                                <TextBlock Text="{loc:Loc Settings.UpdateUrl.Invalid}"
+                                           Style="{StaticResource HintText}"
+                                           Foreground="{DynamicResource WarningBrush}"
+                                           TextWrapping="Wrap"
+                                           Margin="0,0,0,8"
+                                           Visibility="{Binding UpdateUrlIsInvalid, Converter={StaticResource BoolToVis}}" />
+
+                                <Border Height="1"
+                                        Background="{DynamicResource DividerBrush}"
+                                        Margin="0,10,0,10" />
+
+                                <!-- 下载源：每个插件一行，留空 = 用内置默认地址 -->
+                                <TextBlock Text="{loc:Loc Settings.Repos}" Style="{StaticResource CaptionText}" />
+                                <TextBlock Text="{loc:Loc Settings.Repos.Hint}"
+                                           Style="{StaticResource HintText}"
+                                           TextWrapping="Wrap" />
+
+                                <ItemsControl ItemsSource="{Binding RepoSources}" Margin="0,6,0,0">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,0,0,8">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="96" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0"
+                                                               Text="{Binding Label}"
+                                                               Style="{StaticResource HintText}"
+                                                               VerticalAlignment="Center" />
+                                                    <TextBox Grid.Column="1"
+                                                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
+                                                </Grid>
+                                                <TextBlock Style="{StaticResource HintText}" Margin="96,1,0,0">
+                                                    <Run Text="{loc:Loc Settings.Repos.Default}" />
+                                                    <Run Text="{Binding DefaultValue, Mode=OneWay}" />
+                                                </TextBlock>
+                                                <TextBlock Text="{Binding Hint}"
+                                                           Style="{StaticResource HintText}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="96,1,0,0"
+                                                           Visibility="{Binding HasHint, Converter={StaticResource BoolToVis}}" />
+                                                <TextBlock Text="{loc:Loc Settings.Repos.Invalid}"
+                                                           Style="{StaticResource HintText}"
+                                                           Foreground="{DynamicResource WarningBrush}"
+                                                           TextWrapping="Wrap"
+                                                           Margin="96,1,0,0"
+                                                           Visibility="{Binding IsInvalid, Converter={StaticResource BoolToVis}}" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <Button Content="{loc:Loc Settings.Repos.Reset}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="8,4"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,2,0,10"
+                                        Command="{Binding ResetRepoSourcesCommand}" />
+
+                                <Border Height="1"
+                                        Background="{DynamicResource DividerBrush}"
+                                        Margin="0,2,0,10" />
+
+                                <!-- 插件文件：一个可下载文件一行（左边地址、右边文件名）。
+                                     排法 B —— 两栏一次看完，比「先选文件再展开两个框」少一次点击。
+                                     框里留空 = 用内置默认值，默认值以灰色占位文字显示在框内。 -->
+                                <TextBlock Text="{loc:Loc Settings.Slots}" Style="{StaticResource CaptionText}" />
+                                <TextBlock Text="{loc:Loc Settings.Slots.Hint}"
+                                           Style="{StaticResource HintText}"
+                                           TextWrapping="Wrap" />
+
+                                <!-- 两栏的表头只写一次（每行都写就太吵了），列宽必须与下面行里的完全一致 -->
+                                <Grid Margin="0,8,0,2">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="230" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               Text="{loc:Loc Settings.Slots.AddressLabel}"
+                                               Style="{StaticResource HintText}" />
+                                    <TextBlock Grid.Column="1"
+                                               Text="{loc:Loc Settings.Slots.FileNameLabel}"
+                                               Style="{StaticResource HintText}"
+                                               Margin="6,0,0,0" />
+                                </Grid>
+
+                                <ItemsControl ItemsSource="{Binding AssetSlotGroups}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Margin="0,0,0,8">
+                                                <!-- 组标题 = 插件名：一个插件有多个文件时，靠它分得清哪几行是一伙的 -->
+                                                <TextBlock Text="{Binding Title}"
+                                                           Style="{StaticResource CaptionText}"
+                                                           Foreground="{DynamicResource TextPrimaryBrush}"
+                                                           FontWeight="SemiBold"
+                                                           Margin="0,0,0,4" />
+
+                                                <ItemsControl ItemsSource="{Binding Slots}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <StackPanel Margin="0,0,0,6">
+                                                                <Grid>
+                                                                    <Grid.ColumnDefinitions>
+                                                                        <ColumnDefinition Width="*" />
+                                                                        <ColumnDefinition Width="230" />
+                                                                    </Grid.ColumnDefinitions>
+
+                                                                    <!-- 地址：空框时在框内显示默认地址当占位文字。
+                                                                         占位文字必须 IsHitTestVisible=False，否则点不到输入框。 -->
+                                                                    <Grid Grid.Column="0">
+                                                                        <TextBox Text="{Binding Address, UpdateSourceTrigger=PropertyChanged}" />
+                                                                        <TextBlock Text="{Binding DefaultAddress}"
+                                                                                   IsHitTestVisible="False"
+                                                                                   VerticalAlignment="Center"
+                                                                                   Margin="7,0,7,0"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                                                                   Visibility="{Binding IsAddressEmpty, Converter={StaticResource BoolToVis}}" />
+                                                                    </Grid>
+
+                                                                    <Grid Grid.Column="1" Margin="6,0,0,0">
+                                                                        <TextBox Text="{Binding FileName, UpdateSourceTrigger=PropertyChanged}" />
+                                                                        <TextBlock Text="{Binding DefaultFileName}"
+                                                                                   IsHitTestVisible="False"
+                                                                                   VerticalAlignment="Center"
+                                                                                   Margin="7,0,7,0"
+                                                                                   TextTrimming="CharacterEllipsis"
+                                                                                   Foreground="{DynamicResource TextTertiaryBrush}"
+                                                                                   Visibility="{Binding IsFileNameEmpty, Converter={StaticResource BoolToVis}}" />
+                                                                    </Grid>
+                                                                </Grid>
+
+                                                                <TextBlock Text="{Binding PlacementHint}"
+                                                                           Style="{StaticResource HintText}"
+                                                                           TextWrapping="Wrap"
+                                                                           Margin="0,2,0,0" />
+
+                                                                <!-- 目录槽专属：把「第二个框是仓库内的目录名」说清楚，
+                                                                     否则用户会以为要去下某个叫 systemPatches 的文件。 -->
+                                                                <TextBlock Text="{Binding DirectoryHint}"
+                                                                           Style="{StaticResource HintText}"
+                                                                           TextWrapping="Wrap"
+                                                                           Visibility="{Binding IsDirectorySlot, Converter={StaticResource BoolToVis}}" />
+
+                                                                <TextBlock Text="{Binding DefaultFileNameHint}"
+                                                                           Style="{StaticResource HintText}"
+                                                                           TextWrapping="Wrap"
+                                                                           Visibility="{Binding HasCustomFileName, Converter={StaticResource BoolToVis}}" />
+
+                                                                <TextBlock Text="{Binding InvalidAddressHint}"
+                                                                           Style="{StaticResource HintText}"
+                                                                           Foreground="{DynamicResource WarningBrush}"
+                                                                           TextWrapping="Wrap"
+                                                                           Visibility="{Binding IsAddressInvalid, Converter={StaticResource BoolToVis}}" />
+                                                            </StackPanel>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <Button Content="{loc:Loc Settings.Slots.Reset}"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="8,4"
+                                        HorizontalAlignment="Left"
+                                        Margin="0,2,0,10"
+                                        Command="{Binding ResetAssetSlotsCommand}" />
+
+                                <!-- 这里原先有个「保存设置」按钮，用户 2026-09-19 要求取消：
+                                     改动已经由自动落盘自己写进 settings.json（400ms 节流 + 关窗补写），
+                                     再留个按钮等于让用户猜「我改了没点它，到底存没存」。
+                                     落盘的唯一实现是 SaveSettings()，只被自动落盘调用。 -->
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ══ 总进度与操作按钮 ════════════════════════════════ -->
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Margin="0,0,16,0" VerticalAlignment="Center">
+                <TextBlock Text="{Binding OverallStatus}" Style="{StaticResource CaptionText}" />
+                <ProgressBar Style="{StaticResource FlatProgressBar}"
+                             Height="8"
+                             Margin="0,6,0,0"
+                             Value="{Binding OverallProgress, Mode=OneWay}"
+                             IsIndeterminate="{Binding OverallIsIndeterminate}" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="{loc:Loc Common.Cancel}"
+                        Style="{StaticResource SecondaryButton}"
+                        Command="{Binding CancelCommand}" />
+                <Button Content="{loc:Loc Common.Start}"
+                        Style="{StaticResource PrimaryButton}"
+                        Command="{Binding StartCommand}"
+                        Margin="10,0,0,0" />
+            </StackPanel>
+        </Grid>
+
+        <!-- ══ 运行日志 ════════════════════════════════════════ -->
+        <Border Grid.Row="3" Style="{StaticResource Card}" Margin="0,12,0,0" Padding="12">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="0,0,0,6">
+                    <TextBlock Text="{loc:Loc Common.Log}" Style="{StaticResource SectionHeaderText}" Margin="0" />
+                    <Button Content="{loc:Loc Common.ClearLog}"
+                            Style="{StaticResource LinkButton}"
+                            HorizontalAlignment="Right"
+                            Command="{Binding ClearLogCommand}" />
+                </Grid>
+
+                <ListBox x:Name="LogList"
+                         Grid.Row="1"
+                         ItemsSource="{Binding Logs}"
+                         ItemContainerStyle="{StaticResource LogItem}"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto"
+                         VirtualizingPanel.IsVirtualizing="True">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding TimeText}"
+                                           Style="{StaticResource HintText}"
+                                           Width="58"
+                                           VerticalAlignment="Top" />
+                                <TextBlock Text="{Binding Message}"
+                                           FontSize="11.5"
+                                           TextWrapping="Wrap"
+                                           MaxWidth="1000"
+                                           Foreground="{Binding Level, Converter={StaticResource LogBrush}}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+
+        <!-- ══ 底部声明 ════════════════════════════════════════ -->
+        <!--
+            文案走语言包（键 App.Notice），三份包取同一句中文 —— 作者署名与授权声明
+            不随界面语言改写，所以三份取值相同是**刻意**的，别把它当成漏翻译。
+        -->
+        <TextBlock Grid.Row="4"
+                   Text="{loc:Loc App.Notice}"
+                   Style="{StaticResource CaptionText}"
+                   HorizontalAlignment="Center"
+                   TextAlignment="Center"
+                   Margin="0,10,0,0" />
+    </Grid>
+</Window>

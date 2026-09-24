@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>12.0</LangVersion>
+    <RootNamespace>SwitchCfwWizard</RootNamespace>
+    <AssemblyName>SwitchCfwWizard</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyTitle>Switch CFW Wizard</AssemblyTitle>
+    <Product>Switch CFW Wizard</Product>
+    <Version>0.1.0</Version>
+    <FileVersion>0.1.0.0</FileVersion>
+    <NeutralLanguage>zh-Hans</NeutralLanguage>
+    <DebugType>embedded</DebugType>
+    <!--
+      程序图标：仓库根目录的 ico.ico（用户指定），exe 与任务栏/窗口共用同一份。
+      ⚠️ 只有这一处路径会被 MSBuild 求值；XAML 那边走下面的 <Resource Link>，
+      两处**指向同一个文件**，改图标只需换掉那个 ico。
+    -->
+    <ApplicationIcon>..\..\ico.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      SharpCompress —— 唯一一个第三方依赖，只为解 usb-botbase 的 atmosphere.7z。
+
+      .NET 8 自带的 System.IO.Compression 只认 zip，而 usb-botbase（Koi-3088）**只发 7z**，
+      没有 zip 变体；本机也没有 7z 命令行可借。要么引这个包，要么这个插件只能让用户手动解压 ——
+      用户 2026-09-18 选择了引入。
+
+      ⚠️ 它的用途**仅限 7z**：zip 仍走自带的 ZipFile（见 ZipExtractor），
+      别顺手把 zip 也换成 SharpCompress —— 那会把「零依赖」这条约定的代价白白放大。
+    -->
+    <PackageReference Include="SharpCompress" Version="0.50.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      多语言资源以嵌入式 JSON 形式打包；运行期可被 exe 同级 lang/ 目录下的同名文件覆盖。
+      WithCulture=false 是必须的：否则 MSBuild 会把 Strings.zh-Hans.json 当成
+      “zh-Hans 区域性资源”编译进卫星程序集，主程序集里就再也读不到它们了。
+    -->
+    <EmbeddedResource Include="Localization\Strings.*.json" WithCulture="false" />
+  </ItemGroup>
+
+  <!--
+    ⚠️ boot.dat（SX GEAR 的引导文件）**刻意不在这里内嵌**。
+    2026-09-21 起它改为按「高级设置 → boot.dat 下载地址」现场下载（见 Services/BootDatSource.cs），
+    生成时只是把下好的那一份复制到 out/ 根目录。
+    把资源条目加回去**不会报错**，但会让「下载失败 ⇒ 这一项跳过」的语义悄悄失效
+    —— 那种「以为还有内置兜底」的怀疑最费时间，所以这里留一句说明。
+  -->
+
+  <ItemGroup>
+    <!--
+      上面 <ApplicationIcon> 只影响 exe 的文件图标；窗口标题栏/任务栏那一枚要走 WPF 资源，
+      所以同一个 ico 再以 <Resource> 收一次，用 Link 放进程序集资源根（XAML 里 Icon="/ico.ico"）。
+    -->
+    <Resource Include="..\..\ico.ico" Link="ico.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      只为了让离线回归测试能验证「界面状态 → WizardOptions」这一步装配（BuildWizardOptions）。
+      这一步走 private 成员，用公共 API 只能经 RunAsync 触发，而 RunAsync 必须联网下载。
+      没有这个接缝就只能靠肉眼读那十几行赋值 —— 而「emuMMC 被赋成了 sysMMC 的值」这种
+      复制粘贴错误恰恰是肉眼最容易漏、后果又最静默的（用户以为没屏蔽，配置却写进去了）。
+    -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>ConfigSmokeTest</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

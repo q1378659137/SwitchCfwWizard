@@ -1,0 +1,14 @@
+[
+  "exosphere.ini",
+  "atmosphere\\config\\system_settings.ini",
+  "atmosphere\\config\\stratosphere.ini",
+  "atmosphere\\config\\override_config.ini",
+  "atmosphere\\hosts\\default.txt",
+  "atmosphere\\hosts\\sysmmc.txt",
+  "atmosphere\\hosts\\emummc.txt",
+  "bootloader\\hekate_ipl.ini",
+  "bootloader\\nyx.ini",
+  "config\\sys-patch\\config.ini",
+  "config\\ultrahand\\config.ini",
+  "config\\ovl-sysmodules\\config.ini"
+]

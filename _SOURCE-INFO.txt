@@ -1,0 +1,36 @@
+﻿SwitchCFWizard 源码包
+==============================================
+
+  版本        0.1.0（取自 src/SwitchCfwWizard/SwitchCfwWizard.csproj）
+  打包时间    2026-09-24 16:27:14 +08:00
+  打包脚本    tools/pack-source.ps1（仓库自带，可重复执行）
+  文件数      89
+  解压后体积  2.09 MB
+  压缩包      SwitchCFWizard-0.1.0-src.zip
+
+内容概览
+----------------------------------------------
+  (根目录文件)                6 个文件
+  samples                13 个文件
+  src                    54 个文件
+  tools                  16 个文件
+
+已排除（打包时跳过，不在本包内）
+----------------------------------------------
+  按目录名整块跳过：
+  .workbuddy-ai/     1 处
+  __pycache__/       1 处
+  bin/               3 处
+  dist/              1 处
+  obj/               3 处
+  publish/           1 处
+  按文件名 / 扩展名跳过：
+  build-rel.log
+
+怎么用
+----------------------------------------------
+  1. 装 .NET 8 SDK（global.json 里锁了版本；仓库是 WPF 项目，Windows 上才编得动）
+  2. 构建：  bash tools/build.sh --help      # 四种发布形态，含 --verify 自检
+  3. 回归：  dotnet run -c Release --project tools/ConfigSmokeTest
+  4. 自检：  构建出来的 SwitchCfwWizard.exe --selftest
+  详细说明（构建、护栏、历史轮次、界面约定）见 README.md

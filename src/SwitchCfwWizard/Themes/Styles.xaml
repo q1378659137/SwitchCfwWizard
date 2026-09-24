@@ -1,0 +1,511 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- ══ 调色板 ═══════════════════════════════════════════════
+         这里的色值是**浅色主题的初值**，不是唯一真相：暗夜模式在运行时由
+         Services/ThemeService.Apply 原地改写这些 Brush 的 Color（能这么干的原因见那里的注释 ——
+         界面里 160 多处引用全是 StaticResource，共享的就是这一批实例）。
+
+         ⚠️ 因此每个色值都必须与 `Services/ThemePalette.Light` **逐字一致**：不一致的话，
+         第一次 Apply 会让颜色在窗口显示前当场跳一下。回归 CheckThemePaletteMatchesStyles 钉住这条。
+
+         新增一个颜色时三处一起加：这里、ThemePalette.Keys、ThemePalette 的两套字典。
+         ══════════════════════════════════════════════════════════ -->
+    <SolidColorBrush x:Key="AppBackgroundBrush" Color="#FFF4F6F9" />
+    <SolidColorBrush x:Key="CardBackgroundBrush" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="CardBorderBrush" Color="#FFE4E7ED" />
+    <SolidColorBrush x:Key="DividerBrush" Color="#FFEEF0F4" />
+    <SolidColorBrush x:Key="InnerPanelBackgroundBrush" Color="#FFFAFBFC" />
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#FF1D2129" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#FF6B7280" />
+    <SolidColorBrush x:Key="TextTertiaryBrush" Color="#FF9AA1AC" />
+    <SolidColorBrush x:Key="LogInfoBrush" Color="#FF4E5969" />
+    <SolidColorBrush x:Key="ExpanderHeaderBrush" Color="#FF6B7280" />
+    <SolidColorBrush x:Key="AccentBrush" Color="#FF2B6CF6" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#FF1D5BE0" />
+    <SolidColorBrush x:Key="AccentSoftBrush" Color="#FFEAF1FE" />
+    <SolidColorBrush x:Key="SuccessBrush" Color="#FF0E8A5F" />
+    <SolidColorBrush x:Key="WarningBrush" Color="#FFB8720A" />
+    <SolidColorBrush x:Key="DangerBrush" Color="#FFC0392B" />
+    <SolidColorBrush x:Key="WarnBadgeBackgroundBrush" Color="#FFFDF3E3" />
+    <SolidColorBrush x:Key="ControlBackgroundBrush" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="ControlHoverBrush" Color="#FFF7F9FC" />
+    <SolidColorBrush x:Key="DisabledButtonBrush" Color="#FFC7CDD8" />
+    <SolidColorBrush x:Key="PrimaryButtonTextBrush" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="InputBorderBrush" Color="#FFD6DAE2" />
+    <SolidColorBrush x:Key="ProgressTrackBrush" Color="#FFEDF0F5" />
+    <SolidColorBrush x:Key="ScrollTrackBrush" Color="#FFF0F2F7" />
+    <SolidColorBrush x:Key="ScrollThumbBrush" Color="#FFC3C9D4" />
+
+    <!-- ══ 文本 ═══════════════════════════════════════════════ -->
+    <Style x:Key="TitleText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="19" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+    </Style>
+
+    <Style x:Key="SectionHeaderText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="Margin" Value="0,0,0,8" />
+    </Style>
+
+    <Style x:Key="BodyText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="CaptionText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <Style x:Key="HintText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
+    <!-- ══ 卡片 ═══════════════════════════════════════════════ -->
+    <Style x:Key="Card" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CardBorderBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="10" />
+        <Setter Property="Padding" Value="14" />
+        <Setter Property="Margin" Value="0,0,0,10" />
+    </Style>
+
+    <Style x:Key="InnerPanel" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource InnerPanelBackgroundBrush}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource DividerBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="10" />
+    </Style>
+
+    <Style x:Key="Badge" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="6,1" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="BadgeText" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+    </Style>
+
+    <!-- ══ 进度条 ═════════════════════════════════════════════ -->
+    <Style x:Key="FlatProgressBar" TargetType="ProgressBar">
+        <Setter Property="Height" Value="6" />
+        <Setter Property="Background" Value="{DynamicResource ProgressTrackBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ProgressBar">
+                    <Border Background="{TemplateBinding Background}" CornerRadius="3" ClipToBounds="True">
+                        <Grid>
+                            <Rectangle Name="PART_Track" />
+                            <Border Name="PART_Indicator"
+                                    HorizontalAlignment="Left"
+                                    Background="{TemplateBinding Foreground}"
+                                    CornerRadius="3" />
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsIndeterminate" Value="True">
+                            <Setter TargetName="PART_Indicator" Property="Opacity" Value="0.55" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ══ 按钮 ═══════════════════════════════════════════════ -->
+    <Style x:Key="PrimaryButton" TargetType="Button">
+        <Setter Property="Background" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource PrimaryButtonTextBrush}" />
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Padding" Value="18,8" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource DisabledButtonBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="SecondaryButton" TargetType="Button">
+        <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Padding" Value="12,6" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{DynamicResource InputBorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bd" Property="Opacity" Value="0.5" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="LinkButton" TargetType="Button">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Padding" Value="4,2" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="Transparent" Padding="{TemplateBinding Padding}">
+                        <TextBlock Text="{TemplateBinding Content}"
+                                   Foreground="{TemplateBinding Foreground}"
+                                   FontSize="{TemplateBinding FontSize}"
+                                   TextDecorations="Underline" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ══ 输入控件 ═══════════════════════════════════════════ -->
+    <Style TargetType="TextBox">
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Padding" Value="7,5" />
+        <Setter Property="BorderBrush" Value="{DynamicResource InputBorderBrush}" />
+        <Setter Property="Background" Value="{DynamicResource ControlBackgroundBrush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+    </Style>
+
+    <!-- ⚠️ ComboBox / CheckBox / Expander 是**系统原生控件**：它们的默认模板（Aero2）用的是
+         系统画刷，不会跟着上面那些资源键走 —— 不重画的话，暗夜模式下这几个控件会保持浅色
+         （顶部语言/主题下拉框、15 个勾选框、组件卡片里的「选项」展开器，都在最显眼的位置）。
+         下面用**最小模板**覆盖：只替换视觉，不改变控件行为（IsDropDownOpen / IsChecked / IsExpanded
+         仍是标准双向绑定）。
+
+         ⚠️ 没被覆盖的是 ScrollBar 与系统对话框（MessageBox、文件选择器）—— 它们仍是系统外观。
+         那是**有意**留下的：重画滚动条要碰命中区域与拖动逻辑，而这类交互**离线回归验不了**
+         （selftest 只查绑定能不能解析）。宁可在 README 里如实说明，也不要一个「看着更完整、
+         但可能拖不动」的滚动条。 -->
+    <Style TargetType="ComboBox">
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Padding" Value="7,4" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton x:Name="Toggle"
+                                      Focusable="False"
+                                      ClickMode="Press"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="Bd"
+                                            Background="{DynamicResource ControlBackgroundBrush}"
+                                            BorderBrush="{DynamicResource InputBorderBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="6">
+                                        <Path HorizontalAlignment="Right"
+                                              VerticalAlignment="Center"
+                                              Margin="0,0,9,0"
+                                              Data="M0,0 L4,4 L8,0"
+                                              Stroke="{DynamicResource TextSecondaryBrush}"
+                                              StrokeThickness="1.4" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+
+                        <!-- 选中项。IsHitTestVisible=False 让点击落到底下那个 ToggleButton 上，
+                             否则点在文字上不会展开（这一条漏了就是「下拉框点不开」）。
+
+                             ⚠️⚠️ ContentTemplateSelector 这一行**不能少**：`DisplayMemberPath`
+                             是通过它（ItemsControl 内部生成的模板选择器）生效的。
+                             少了它，`SelectionBoxItemTemplate` 会是 null ⇒ ContentPresenter
+                             拿不到模板 ⇒ **关闭状态下直接把 SelectedItem 的 ToString() 显示出来**
+                             （症状：语言框显示「LanguageInfo { Code = … }」、主题框显示
+                             「SwitchCfwWizard.ViewModels.ThemeInfo」）。展开时用的是 ItemTemplate，
+                             所以「展开正常、关着显示类型名」是这条漏项的特征。 -->
+                        <ContentPresenter IsHitTestVisible="False"
+                                          Content="{TemplateBinding SelectionBoxItem}"
+                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                          ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                          Margin="{TemplateBinding Padding}"
+                                          HorizontalAlignment="Left"
+                                          VerticalAlignment="Center" />
+
+                        <Popup x:Name="PART_Popup"
+                               AllowsTransparency="True"
+                               Placement="Bottom"
+                               Focusable="False"
+                               PopupAnimation="Fade"
+                               IsOpen="{TemplateBinding IsDropDownOpen}">
+                            <Border Background="{DynamicResource ControlBackgroundBrush}"
+                                    BorderBrush="{DynamicResource InputBorderBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    Margin="0,2,0,0"
+                                    MinWidth="{TemplateBinding ActualWidth}"
+                                    MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                <ScrollViewer>
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ComboBoxItem">
+        <Setter Property="Padding" Value="8,5" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Bd"
+                            Background="Transparent"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ControlHoverBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="CheckBox">
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <!-- 根用 Border 而不是直接放 StackPanel：让**整行**都可点（默认模板就是这个行为，
+                         收窄成「只有方框和文字能点」是一种不易察觉的退化）。 -->
+                    <Border Background="Transparent">
+                        <StackPanel Orientation="Horizontal">
+                            <Border x:Name="Box"
+                                    Width="15"
+                                    Height="15"
+                                    CornerRadius="3"
+                                    Background="{DynamicResource ControlBackgroundBrush}"
+                                    BorderBrush="{DynamicResource InputBorderBrush}"
+                                    BorderThickness="1"
+                                    VerticalAlignment="Center">
+                                <Path x:Name="Tick"
+                                      Data="M0,3.2 L3,6.2 L7.6,1"
+                                      Stroke="{DynamicResource PrimaryButtonTextBrush}"
+                                      StrokeThickness="1.6"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      Visibility="Collapsed" />
+                            </Border>
+                            <ContentPresenter Margin="7,0,0,0" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Box" Property="Background" Value="{DynamicResource AccentBrush}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                            <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{DynamicResource AccentBrush}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="Expander">
+        <Setter Property="FontSize" Value="12.5" />
+        <Setter Property="Foreground" Value="{DynamicResource ExpanderHeaderBrush}" />
+        <Setter Property="Margin" Value="0,8,0,0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Expander">
+                    <StackPanel>
+                        <!-- 展开箭头的旋转用「换一段 Data」实现（比写 RenderTransform 少一层），
+                             两段几何是同一个三角形的旋转前后形态。 -->
+                        <ToggleButton x:Name="HeaderSite"
+                                      Focusable="False"
+                                      ClickMode="Press"
+                                      Cursor="Hand"
+                                      Foreground="{TemplateBinding Foreground}"
+                                      Content="{TemplateBinding Header}"
+                                      ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                      IsChecked="{Binding IsExpanded, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="Transparent" Padding="0,2">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path x:Name="Arrow"
+                                                  Data="M0,0 L4,4 L0,8"
+                                                  Stroke="{DynamicResource TextSecondaryBrush}"
+                                                  StrokeThickness="1.4"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,6,0" />
+                                            <ContentPresenter VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Arrow" Property="Data" Value="M0,0 L4,4 L8,0" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter x:Name="Body"
+                                          Margin="10,6,0,0"
+                                          Visibility="Collapsed" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsExpanded" Value="True">
+                            <Setter TargetName="Body" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ListBox">
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled" />
+    </Style>
+
+    <Style x:Key="LogItem" TargetType="ListBoxItem">
+        <Setter Property="Padding" Value="2,1" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <ContentPresenter />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ⚠️ 滚动条也要重画：默认模板是系统外观（浅色），在近黑底上就是一条刺眼的白。
+         拖动逻辑**不由模板负责**，而是框架的 `Track` 在管（它按名字找 `PART_Track`）——
+         所以只要结构对（PART_Track + Thumb + 两个 RepeatButton），拖动与点击翻页照常工作。
+         ⚠️ 几个名字一个都不能改：PART_Track、Track.Thumb、Track.DecreaseRepeatButton、Track.IncreaseRepeatButton。
+         ⚠️ 两个 RepeatButton 用 Opacity=0 而**不是** Visibility=Collapsed：前者保留命中区域
+         （点轨道空白处能翻页），后者会让整条轨道不可点。
+         selftest 里有断言：每个 ScrollBar 的模板里必须真的找得到 PART_Track 且 Thumb 非空。 -->
+    <Style TargetType="ScrollBar">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Width" Value="10" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollBar">
+                    <Grid Background="Transparent">
+                        <Border Background="{DynamicResource ScrollTrackBrush}" CornerRadius="5" />
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageUpCommand" Focusable="False" Opacity="0" />
+                            </Track.DecreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb x:Name="DragThumb" Margin="2,0">
+                                    <Thumb.Template>
+                                        <ControlTemplate TargetType="Thumb">
+                                            <Border x:Name="ThumbFace"
+                                                    Background="{DynamicResource ScrollThumbBrush}"
+                                                    CornerRadius="5" />
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="ThumbFace" Property="Opacity" Value="0.72" />
+                                                </Trigger>
+                                                <Trigger Property="IsDragging" Value="True">
+                                                    <Setter TargetName="ThumbFace" Property="Opacity" Value="0.72" />
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Thumb.Template>
+                                </Thumb>
+                            </Track.Thumb>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Command="ScrollBar.PageDownCommand" Focusable="False" Opacity="0" />
+                            </Track.IncreaseRepeatButton>
+                        </Track>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Orientation" Value="Horizontal">
+                            <Setter Property="Width" Value="Auto" />
+                            <Setter Property="Height" Value="10" />
+                            <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False" />
+                            <Setter TargetName="DragThumb" Property="Margin" Value="0,2" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>
