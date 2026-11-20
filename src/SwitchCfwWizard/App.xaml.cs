@@ -764,6 +764,42 @@ public partial class App : Application
             }
         }
 
+        // 用实际布局检查三个引导项的输入框左右边缘，包括带选择／清除按钮的行。
+        var bootFields = new[]
+        {
+            nameof(MainViewModel.BootStockTitle), nameof(MainViewModel.BootStockId),
+            nameof(MainViewModel.BootStockLogo), nameof(MainViewModel.BootStockIcon),
+            nameof(MainViewModel.BootSysNandTitle), nameof(MainViewModel.BootSysNandId),
+            nameof(MainViewModel.BootSysNandLogo), nameof(MainViewModel.BootSysNandIcon),
+            nameof(MainViewModel.BootEmuNandTitle), nameof(MainViewModel.BootEmuNandId),
+            nameof(MainViewModel.BootEmuNandLogo), nameof(MainViewModel.BootEmuNandIcon),
+        };
+
+        var bootFieldBounds = bootFields.Select(name =>
+        {
+            var box = BoxFor(name);
+            if (box is null || !box.IsVisible || box.ActualWidth <= 0)
+            {
+                themeProblems.Add($"找不到可见的引导项输入框：{name}");
+                return (Name: name, Left: double.NaN, Right: double.NaN);
+            }
+
+            var left = LeftIn(box);
+            return (Name: name, Left: left, Right: left + box.ActualWidth);
+        }).ToArray();
+
+        var firstBootField = bootFieldBounds[0];
+        report.AppendLine($"SELFTEST: boot-field-alignment left={firstBootField.Left:0.#} right={firstBootField.Right:0.#}");
+
+        foreach (var field in bootFieldBounds.Skip(1))
+        {
+            if (Math.Abs(field.Left - firstBootField.Left) > 0.5
+                || Math.Abs(field.Right - firstBootField.Right) > 0.5)
+            {
+                themeProblems.Add($"引导项输入框 {field.Name} 的左右边缘未与 {firstBootField.Name} 对齐");
+            }
+        }
+
         // ── 三个引导项的 id 输入框（用户 2026-11-19：id 允许用户配置）──────────
         // 判据落在**渲染出来的控件**上：框被挪走 / `MaxLength` 漏了 / 绑定绑到空值，
         // 这三种毛病都不报错、也不崩溃，只表现为「框在，但不起作用」。

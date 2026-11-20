@@ -28,7 +28,7 @@
             <Grid Margin="0,3" Visibility="{Binding IsVisible, Converter={StaticResource BoolToVis}}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" SharedSizeGroup="ComponentOptionEditor" />
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Margin="0,0,12,0" VerticalAlignment="Center">
@@ -40,6 +40,7 @@
                 </StackPanel>
 
                 <CheckBox Grid.Column="1"
+                          HorizontalAlignment="Left"
                           VerticalAlignment="Center"
                           IsChecked="{Binding BoolValue}"
                           Visibility="{Binding IsCheckBox, Converter={StaticResource BoolToVis}}" />
@@ -177,6 +178,7 @@
                     <Expander Header="{loc:Loc Common.Options}"
                               Visibility="{Binding HasOptions, Converter={StaticResource BoolToVis}}">
                         <ItemsControl ItemsSource="{Binding OptionGroups}"
+                                      Grid.IsSharedSizeScope="True"
                                       ItemTemplate="{StaticResource OptionGroupTemplate}"
                                       Margin="0,4,0,0" />
                     </Expander>
@@ -378,7 +380,7 @@
                 <StackPanel>
 
                     <!-- 引导进入系统 -->
-                    <Border Style="{StaticResource Card}">
+                    <Border Style="{StaticResource Card}" Grid.IsSharedSizeScope="True">
                         <StackPanel>
                             <TextBlock Text="{loc:Loc Global.Section}" Style="{StaticResource SectionHeaderText}" />
 
@@ -395,8 +397,9 @@
                                        Margin="22,1,0,6" />
                             <Grid Margin="22,0,0,4">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Name}"
@@ -413,8 +416,9 @@
                                  生成侧还有一道 ResolveBootId（手改 settings.json 也拦得住）。 -->
                             <Grid Margin="22,0,0,2">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Id}"
@@ -435,9 +439,9 @@
 
                             <Grid Margin="22,0,0,4">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Logo}"
@@ -462,9 +466,9 @@
                             </Grid>
                             <Grid Margin="22,0,0,10">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Icon}"
@@ -494,8 +498,9 @@
                                        Margin="22,1,0,6" />
                             <Grid Margin="22,0,0,4">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Name}"
@@ -512,8 +517,9 @@
                                  生成侧还有一道 ResolveBootId（手改 settings.json 也拦得住）。 -->
                             <Grid Margin="22,0,0,2">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Id}"
@@ -534,9 +540,9 @@
 
                             <Grid Margin="22,0,0,4">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Logo}"
@@ -561,9 +567,9 @@
                             </Grid>
                             <Grid Margin="22,0,0,10">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Icon}"
@@ -593,8 +599,9 @@
                                        Margin="22,1,0,6" />
                             <Grid Margin="22,0,0,4">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Name}"
@@ -611,8 +618,9 @@
                                  生成侧还有一道 ResolveBootId（手改 settings.json 也拦得住）。 -->
                             <Grid Margin="22,0,0,2">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Id}"
@@ -633,9 +641,9 @@
 
                             <Grid Margin="22,0,0,4">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Logo}"
@@ -660,9 +668,9 @@
                             </Grid>
                             <Grid Margin="22,0,0,0">
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldLabel" />
                                     <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" SharedSizeGroup="BootFieldActions" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Grid.Column="0"
                                            Text="{loc:Loc Global.Boot.Icon}"
@@ -1002,38 +1010,44 @@
                                            Style="{StaticResource HintText}"
                                            TextWrapping="Wrap" />
 
-                                <ItemsControl ItemsSource="{Binding RepoSources}" Margin="0,6,0,0">
+                                <ItemsControl ItemsSource="{Binding RepoSources}"
+                                              Grid.IsSharedSizeScope="True"
+                                              Margin="0,6,0,0">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <StackPanel Margin="0,0,0,8">
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="96" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0"
-                                                               Text="{Binding Label}"
+                                            <Grid Margin="0,0,0,8">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" SharedSizeGroup="RepoSourceLabel" />
+                                                    <ColumnDefinition Width="*" />
+                                                </Grid.ColumnDefinitions>
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto" />
+                                                    <RowDefinition Height="Auto" />
+                                                </Grid.RowDefinitions>
+                                                <TextBlock Text="{Binding Label}"
+                                                           Style="{StaticResource HintText}"
+                                                           VerticalAlignment="Center"
+                                                           Margin="0,0,6,0" />
+                                                <TextBox Grid.Column="1"
+                                                         Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
+                                                <StackPanel Grid.Row="1" Grid.Column="1">
+                                                    <TextBlock Style="{StaticResource HintText}" TextWrapping="Wrap" Margin="0,1,0,0">
+                                                        <Run Text="{loc:Loc Settings.Repos.Default}" />
+                                                        <Run Text="{Binding DefaultValue, Mode=OneWay}" />
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding Hint}"
                                                                Style="{StaticResource HintText}"
-                                                               VerticalAlignment="Center" />
-                                                    <TextBox Grid.Column="1"
-                                                             Text="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
-                                                </Grid>
-                                                <TextBlock Style="{StaticResource HintText}" Margin="96,1,0,0">
-                                                    <Run Text="{loc:Loc Settings.Repos.Default}" />
-                                                    <Run Text="{Binding DefaultValue, Mode=OneWay}" />
-                                                </TextBlock>
-                                                <TextBlock Text="{Binding Hint}"
-                                                           Style="{StaticResource HintText}"
-                                                           TextWrapping="Wrap"
-                                                           Margin="96,1,0,0"
-                                                           Visibility="{Binding HasHint, Converter={StaticResource BoolToVis}}" />
-                                                <TextBlock Text="{loc:Loc Settings.Repos.Invalid}"
-                                                           Style="{StaticResource HintText}"
-                                                           Foreground="{DynamicResource WarningBrush}"
-                                                           TextWrapping="Wrap"
-                                                           Margin="96,1,0,0"
-                                                           Visibility="{Binding IsInvalid, Converter={StaticResource BoolToVis}}" />
-                                            </StackPanel>
+                                                               TextWrapping="Wrap"
+                                                               Margin="0,1,0,0"
+                                                               Visibility="{Binding HasHint, Converter={StaticResource BoolToVis}}" />
+                                                    <TextBlock Text="{loc:Loc Settings.Repos.Invalid}"
+                                                               Style="{StaticResource HintText}"
+                                                               Foreground="{DynamicResource WarningBrush}"
+                                                               TextWrapping="Wrap"
+                                                               Margin="0,1,0,0"
+                                                               Visibility="{Binding IsInvalid, Converter={StaticResource BoolToVis}}" />
+                                                </StackPanel>
+                                            </Grid>
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
