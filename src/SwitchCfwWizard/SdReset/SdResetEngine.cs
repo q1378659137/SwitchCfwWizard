@@ -90,9 +90,375 @@ internal static class SdResetEngine
 		});
 	}
 
+	/// <summary>
+	/// 「不动分区表」的三种手术（用户 2026-11-21 的三个新选项）：
+	///   · <see cref="SdResetAction.FormatMain"/>：就地格式化主数据分区（emuMMC 不碰）；
+	///   · <see cref="SdResetAction.WipeEmuPartition"/>：只把现有 emuMMC 分区前 16 MiB 写零；
+	///   · <see cref="SdResetAction.CreateEmuFiles"/>：只把组件包写到卡上，让下次开机由它创建 emuMMC。
+	///
+	/// 三条都**先读卡上现有的 MBR**（<see cref="SdLayout.FromExistingMbr"/>）再动手 ——
+	/// 不重算布局，也就不会顺手把用户的现有分区改掉。失败时的报告带上「是否已经动过盘」，
+	/// 让用户知道该不该重新执行完整流程。
+	///
+	/// ⚠️ 需要挂载主域的步骤一律放在 <c>using (PreparedDisk …)</c> **之外**：
+	/// <see cref="Prepare"/> 会把卷锁住并卸载，锁还握着的时候去等盘符只会等到超时。
+	/// </summary>
+	private static void RunSurgery(SdResetRequest request, Action<SdResetStatus> report)
+	{
+		string stage = "读取现有分区表";
+		bool touchedDisk = false;
+		SdLayout existing;
+		byte[] mbr;
+		string? root = null;
+
+		try
+		{
+			using (PreparedDisk prepared = Prepare(request, report))
+			{
+				SafeFileHandle disk = prepared.Disk;
+
+				// ⚠️ 必须**合成** MBR：ReadLayout 返回的是 DRIVE_LAYOUT_INFORMATION_EX，
+				//    直接当 MBR 用 → 签名检查必然失败（「这张卡上没有可识别的分区表」）。
+				mbr = SdDisks.MbrFromLayout(SdDisks.ReadLayout(disk));
+				existing = SdLayout.FromExistingMbr(request.Device.Capacity, mbr);
+
+				// ① 只格式化主数据分区：不需要 emuMMC，也不需要挂载。
+				if (request.Action == SdResetAction.FormatMain)
+				{
+					stage = "格式化主数据分区";
+					report(new SdResetStatus(stage + "（分区表保持不变）", Finished: false, null, Written: true));
+
+					// ⚠️ 这里必须读**磁盘上真正的扇区 0**来当"不许变"的基准，不能用上面那份合成 MBR：
+					// 合成只填了磁盘签名（440）与分区表项（450+），前 440 字节是 0；
+					// 而格式化组件会把**它读到的原始扇区 0** 原样写回 —— 两者必然不等，
+					// 于是每次都被判成「格式化程序试图更改分区表」（2026-11-21 用户实测报的就是这个）。
+					byte[] sector0 = new byte[512];
+					if (RandomAccess.Read(disk, sector0, 0L) != sector0.Length)
+					{
+						throw new IOException("读取 TF 卡的引导扇区失败，已停止。");
+					}
+
+					FormatMainPartition(disk, existing, sector0, request.Options.FileSystem, step =>
+					{
+						stage = step;
+						report(new SdResetStatus(step, Finished: false, null, Written: true));
+					},
+					// 「已经改动过卡」只能在**真的写了第一笔之后**才置位：
+					// 格式化组件有可能在第一次写之前就被校验拦下，那时卡上一个字节都没动，
+					// 再报「已经改动过」会让用户以为数据已经坏了。
+					markTouched: () => touchedDisk = true);
+				}
+				else
+				{
+					if (existing.Partitions.Length < 2)
+					{
+						throw new IOException("这张卡上没有 emuMMC 分区（只有一个主数据分区）。请改用「格式化并重建 emuMMC」。");
+					}
+
+					SdPartition emu = existing.Partitions[1];
+					if (emu.Type != SdLayout.HiddenEmuPartitionType)
+					{
+						throw new IOException($"第二个分区不是 emuMMC 隐藏分区（类型 {emu.Type}，应为 {SdLayout.HiddenEmuPartitionType}），已停止。");
+					}
+
+					if (request.Action == SdResetAction.WipeEmuPartition)
+					{
+						stage = "清空 emuMMC 分区的前 16 MiB";
+						report(new SdResetStatus(stage, Finished: false, null, Written: true));
+						touchedDisk = true;
+
+						byte[] zeros = new byte[1048576];
+						long total = Math.Min(16777216L, emu.Length);
+						for (long at = 0L; at < total; at += zeros.Length)
+						{
+							RandomAccess.Write(disk, zeros, emu.Offset + at);
+						}
+						RandomAccess.FlushToDisk(disk);
+
+						report(new SdResetStatus("emuMMC 分区已清空（分区表未改动）", Finished: true, null, Written: true));
+						return;
+					}
+				}
+			}
+
+			// 到这里锁已释放，可以安全地等 Windows 把主数据分区挂回来。
+			stage = "挂载主数据分区";
+			report(new SdResetStatus(stage, Finished: false, null, touchedDisk));
+			root = SdDisks.MountMain(request.Device, existing);
+
+			if (request.Action == SdResetAction.FormatMain)
+			{
+				report(new SdResetStatus("主数据分区已格式化（分区表与 emuMMC 未改动）", Finished: true, null, Written: true, root));
+				return;
+			}
+
+			stage = "读取组件包";
+			if (string.IsNullOrWhiteSpace(request.AutoEmuZipPath))
+			{
+				// 程序里不再内嵌这份组件包（2026-11-21 用户要求删掉那 2.7 MB），
+				// 所以拿不到 zip 路径就没有任何可用的来源 —— 必须说清楚，而不是让子进程去猜。
+				throw new IOException("没有可用的 emuMMC 组件包（这次既没下载到，也没有可复用的本地文件）。");
+			}
+
+			Dictionary<string, byte[]> assets = AutoPayloadAssets.LoadFromFile(request.AutoEmuZipPath);
+
+			if (!assets.TryGetValue("payload.bin", out var assetPayload) || assetPayload.Length == 0)
+			{
+				throw new IOException("组件包里没有 payload.bin，无法创建 emuMMC 所需文件。");
+			}
+
+			// 卡上原有的 payload.bin（hekate 的）才是任务里要记的**原版** ——
+			// 开机跑完自动创建后要把它还原回去。卡上没有就记组件包这份（还原等于空操作）。
+			stage = "检查卡上现有的 payload.bin";
+			var cardPayloadPath = PathPolicy.SafePath(root, "payload.bin");
+			byte[]? cardPayload = null;
+
+			if (File.Exists(cardPayloadPath))
+			{
+				var length = new FileInfo(cardPayloadPath).Length;
+				if (length < 288 || length > 196608)
+				{
+					throw new IOException(
+						$"卡根目录的 payload.bin 大小异常（{length} 字节，正常在 288 字节～192 KiB 之间）。"
+						+ "请先确认它是不是有效的启动文件，或把它移走后再试。");
+				}
+
+				cardPayload = File.ReadAllBytes(cardPayloadPath);
+			}
+
+			stage = "准备自动创建任务";
+			EmuTask task = EmuTask.Create(existing, mbr, cardPayload ?? assetPayload);
+
+			// 上一次没做完（卡上还留着 ready.flag / task.bin）时要先收拾干净，
+			// 否则 Deploy 会以「此卡已有未完成的重建任务」直接拒绝。顺序照搬主流程：
+			// 能读的任务就继续（Resume），读不了的先 Restore 再重新部署。
+			if (EmuTask.HasPending(root))
+			{
+				stage = "清理上一次未完成的任务";
+				try
+				{
+					EmuTask.Read(root);
+				}
+				catch (Exception ex) when (ex is IOException or InvalidDataException)
+				{
+					EmuTaskFiles.Restore(root, static () => { });
+				}
+			}
+
+			stage = "写入组件包文件";
+			touchedDisk = true;
+
+			if (EmuTask.HasPending(root))
+			{
+				EmuTaskFiles.Resume(root, assets, static () => { });
+			}
+			else
+			{
+				// 卡上那份 payload.bin 可能不存在（空卡）—— 所以只在**它确实存在**时才做
+				// 「已有 payload 必须与任务记录一致」的校验，否则 Deploy 会去读一个不存在的文件。
+				EmuTaskFiles.Deploy(root, task, assets, static () => { }, verifyExistingPayload: cardPayload is not null);
+			}
+
+			EmuTask.Read(root).ValidateLayout(mbr, request.Device.Capacity);
+
+			report(new SdResetStatus("已创建 emuMMC 所需文件（分区表未改动）", Finished: true, null, Written: true, root));
+		}
+		catch (Exception ex)
+		{
+			string text = "失败步骤：" + stage + "\n" + ServerAddressPrivacy.Hide(ex.Message);
+			for (Exception? inner = ex; inner is not null; inner = inner.InnerException)
+			{
+				if (inner is Win32Exception win32)
+				{
+					text += $"\n系统错误码：{win32.NativeErrorCode}";
+					break;
+				}
+			}
+
+			report(new SdResetStatus(
+				"操作未完成",
+				Finished: true,
+				text + (touchedDisk ? "\n已经改动过 TF 卡上的内容。" : "\n尚未改动 TF 卡。"),
+				Written: touchedDisk));
+		}
+	}
+
+	/// <summary>
+	/// 就地格式化**主数据分区**（用户 2026-11-21 追加的「仅格式化主数据分区」）。
+	///
+	/// 复用发布包里那个原生 fatfs 组件（<c>ns_format</c>），但把它的写入范围**卡死在主分区内**：
+	/// 任何越界写（尤其是往 emuMMC 里写）立刻返回失败、整次格式化中止；
+	/// 扇区 0 只允许**原样写回**卡上原来的那 512 字节 —— 那把分区表就不可能被这个操作改掉。
+	///
+	/// <paramref name="originalSector0"/> 必须是**从磁盘读出来的**原始扇区 0，
+	/// 不能是 <see cref="SdDisks.MbrFromLayout"/> 合成出来的那份（合成件只有磁盘签名与分区表项，
+	/// 前 440 字节是 0，和真实扇区永远不等 —— 拿它当基准会把每一次格式化都判成「试图更改分区表」）。
+	/// </summary>
+	private static void FormatMainPartition(
+		SafeFileHandle disk,
+		SdLayout layout,
+		byte[] originalSector0,
+		SdFileSystem fileSystem,
+		Action<string> stage,
+		Action markTouched)
+	{
+		bool exfat = fileSystem == SdFileSystem.ExFat;
+		SdPartition main = layout.Main;
+
+		stage("加载格式化组件");
+		nint module = NativeLibrary.Load(NativeFormatter.EnsurePath());
+		try
+		{
+			Format format = Marshal.GetDelegateForFunctionPointer<Format>(NativeLibrary.GetExport(module, "ns_format"));
+
+			stage(exfat ? "正在把主数据分区格式化为 exFAT" : "正在把主数据分区格式化为 FAT32");
+
+			Exception? ioError = null;
+			DiskIo io = (int operation, ulong sector, uint count, nint data) =>
+			{
+				try
+				{
+					if (operation == 2)
+					{
+						RandomAccess.FlushToDisk(disk);
+						return 1;
+					}
+
+					long at = (long)sector * 512;
+					long size = unchecked((long)count) * 512L;
+
+					if (size <= 0 || size > 4194304)
+					{
+						throw new IOException("格式化写入范围异常，已停止。");
+					}
+
+					byte[] buffer = new byte[(int)size];
+					switch (operation)
+					{
+					case 0:
+						// 读：先校验范围（不比对内容），越界就不去读
+						EnsureFormatWriteAllowed(at, size, main, null, originalSector0);
+
+						if (RandomAccess.Read(disk, buffer, at) != buffer.Length)
+						{
+							throw new IOException("读取 TF 卡时返回的数据不完整。");
+						}
+
+						Marshal.Copy(buffer, 0, data, buffer.Length);
+						break;
+					case 1:
+						Marshal.Copy(data, buffer, 0, buffer.Length);
+						EnsureFormatWriteAllowed(at, size, main, buffer, originalSector0);
+						markTouched();
+						RandomAccess.Write(disk, buffer, at);
+						break;
+					default:
+						return 0;
+					}
+
+					return 1;
+				}
+				catch (Exception ex)
+				{
+					ioError ??= ex;
+					return 0;
+				}
+			};
+
+			int code = format((uint)unchecked(layout.DiskBytes / 512), exfat ? 1 : 0, io);
+			GC.KeepAlive(io);
+
+			if (ioError is not null)
+			{
+				throw new IOException("读写 TF 卡失败：" + ioError.Message, ioError);
+			}
+
+			if (code != 0)
+			{
+				throw new IOException($"格式化未完成，文件系统错误码：{code}。请检查 TF 卡状态后重试。");
+			}
+
+			stage("校验文件系统与分区表");
+			byte[] boot = new byte[512];
+			bool bootOk = RandomAccess.Read(disk, boot, main.Offset) == 512
+						  && boot[510] == 85 && boot[511] == 170
+						  && (exfat
+							  ? ((ReadOnlySpan<byte>)boot.AsSpan(3, 8)).SequenceEqual("EXFAT   "u8)
+							  : ((ReadOnlySpan<byte>)boot.AsSpan(82, 8)).SequenceEqual("FAT32   "u8));
+
+			if (!bootOk)
+			{
+				throw new IOException("主数据分区文件系统校验失败。");
+			}
+
+			byte[] after = new byte[512];
+			if (RandomAccess.Read(disk, after, 0L) != 512
+				|| !((ReadOnlySpan<byte>)after).SequenceEqual((ReadOnlySpan<byte>)originalSector0))
+			{
+				throw new IOException("格式化后分区表发生了变化，已停止。");
+			}
+
+			RandomAccess.FlushToDisk(disk);
+
+			stage("刷新 Windows 分区信息");
+			SdDisks.Control(disk, 459072u);
+		}
+		finally
+		{
+			NativeLibrary.Free(module);
+		}
+	}
+
+	/// <summary>
+	/// 「格式化主数据分区」时每一次读/写的范围与内容校验（**纯函数**，回归直接调它）。
+	///
+	/// 两条规则：
+	/// <list type="bullet">
+	///   <item>除了扇区 0，任何读/写都必须落在主数据分区之内 —— 越界（尤其是写进 emuMMC）立刻中止；</item>
+	///   <item>扇区 0 允许读；写的话必须与**卡上原来那 512 字节**逐字节相同。</item>
+	/// </list>
+	///
+	/// ⚠️ 第二条的基准只能是**从磁盘读出来的原始扇区 0**，不能是
+	/// <see cref="SdDisks.MbrFromLayout"/> 合成出来的那份：合成件只填了磁盘签名（440）与分区表项（450+），
+	/// 前 440 字节是 0，而格式化组件会把读到的真实扇区原样写回 —— 拿合成件当基准，
+	/// 每次格式化都会被判成「试图更改分区表」（2026-11-21 实测报的就是这个）。
+	///
+	/// <paramref name="written"/> 为 <c>null</c> 表示这是一次**读**：只校验范围，不比对内容。
+	/// </summary>
+	internal static void EnsureFormatWriteAllowed(
+		long at,
+		long size,
+		SdPartition main,
+		byte[]? written,
+		byte[] originalSector0)
+	{
+		bool isMbrSector = at == 0L && size == 512L;
+
+		if (!isMbrSector && (at < main.Offset || at + size > main.Offset + main.Length))
+		{
+			throw new IOException("格式化程序试图写到主数据分区之外，已停止（emuMMC 与分区表都不会被改动）。");
+		}
+
+		if (isMbrSector && written is not null
+			&& !((ReadOnlySpan<byte>)written).SequenceEqual((ReadOnlySpan<byte>)originalSector0))
+		{
+			throw new IOException("格式化程序试图更改分区表，已停止。");
+		}
+	}
+
 	internal static void Run(SdResetRequest request, Action<SdResetStatus> report)
 	{
 		request.Device.EnsureResetAllowed();
+
+		// 用户 2026-11-21 的三个新选项：都不动分区表，走单独一条更短的路。
+		if (request.Action is SdResetAction.FormatMain
+			or SdResetAction.WipeEmuPartition
+			or SdResetAction.CreateEmuFiles)
+		{
+			RunSurgery(request, report);
+			return;
+		}
+
 		SdLayout layout = SdLayout.Create(request.Device.Capacity, request.Options);
 		if (request.MountOnly)
 		{

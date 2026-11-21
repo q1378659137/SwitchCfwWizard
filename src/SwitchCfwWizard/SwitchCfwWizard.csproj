@@ -21,7 +21,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyTitle>Switch CFW Wizard</AssemblyTitle>
     <Product>Switch CFW Wizard</Product>
-    <Version>0.2.0</Version>
+    <Version>0.2.1</Version>
     <FileVersion>0.1.0.0</FileVersion>
     <NeutralLanguage>zh-Hans</NeutralLanguage>
     <DebugType>embedded</DebugType>
@@ -110,8 +110,21 @@
              Condition="'$(PublishSingleFile)' != 'true'" />
     <EmbeddedResource Include="SdReset\Native\NsToolbox.Formatter.dll" LogicalName="SwitchCfwWizard.Native.NsToolbox.Formatter.dll" />
 
-    <!-- 自动创建 emuMMC 用的 hekate 自动化载荷（含 GPL 源码 source.zip）。 -->
-    <EmbeddedResource Include="SdReset\Assets\NsToolbox.AutoEmu.zip" LogicalName="NsToolbox.AutoEmu.zip" />
+    <!--
+        配置模板（2026-11-21）：**编进程序**，不往 exe 旁边放文件（用户明确要求「不单独放出」）。
+        资源名固定成 SwitchCfwWizard.Templates.<id>.json —— 中文文件名当资源名在不同机器/打包路径下
+        容易出现编码与转义差异，界面上的显示名由语言包给（Template.Play / Template.Study）。
+        用户自己导入的模板仍然落到 exe 同级的 templates/ 目录（导入这个动作本身就要写盘）。
+    -->
+    <EmbeddedResource Include="Templates\play.json" LogicalName="SwitchCfwWizard.Templates.play.json" />
+    <EmbeddedResource Include="Templates\study.json" LogicalName="SwitchCfwWizard.Templates.study.json" />
+
+    <!--
+        「自动创建 emuMMC」的 hekate 自动化载荷（NsToolbox.AutoEmu.zip，2.7 MB）自 2026-11-21 起
+        **不再内嵌**：用户要求删掉这份旧资源，改由「格式化并重建 emuMMC」从
+        https://github.com/q1378659137/AutoEmu/releases 下载最新版，落到 download/AutoEmu_<版本>.zip；
+        离线场景用主界面的「优先使用本地资源」复用那份已下载的 zip。
+    -->
   </ItemGroup>
 
 </Project>

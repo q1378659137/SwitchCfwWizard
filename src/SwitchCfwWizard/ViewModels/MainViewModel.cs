@@ -8,6 +8,7 @@ using Microsoft.Win32;
 using SwitchCfwWizard.Infrastructure;
 using SwitchCfwWizard.Localization;
 using SwitchCfwWizard.Models;
+using SwitchCfwWizard.SdReset;
 using SwitchCfwWizard.Services;
 
 namespace SwitchCfwWizard.ViewModels;
@@ -178,6 +179,9 @@ public sealed class MainViewModel : ObservableObject, ILogSink
                     Components.Where(c => c.Category == category)))
                 .Where(group => group.Components.Count > 0));
 
+        // 配置模板（templates/*.json）：只扫目录，不改任何勾选 —— 应用是用户点/选之后的事。
+        RefreshTemplates();
+
         // 高级设置里「插件文件」那一区：每个「文件槽」一行（地址 + 文件名）。
         //
         // **从 ComponentCatalog.All 现算，不手抄清单** —— 与 Components / ComponentGroups 同一条原则：
@@ -295,6 +299,7 @@ public sealed class MainViewModel : ObservableObject, ILogSink
         _mirror = _settings.Mirror ?? string.Empty;
         _bootDatUrl = _settings.BootDatUrl ?? string.Empty;
         _updateUrl = _settings.UpdateUrl ?? string.Empty;
+        _autoEmuUrl = _settings.AutoEmuUrl ?? string.Empty;
 
         // ⚠️ 全部经 Command(...) 建，别改回 new RelayCommand( —— 那样按钮点击就不会进日志文件，
         //    而「漏记一条」是静默的（用户恰恰是靠日志排查问题的人）。
@@ -712,6 +717,11 @@ public sealed class MainViewModel : ObservableObject, ILogSink
         if (string.Equals(key, nameof(UpdateUrl), StringComparison.Ordinal))
         {
             return loc["Log.Setting.UpdateUrl"];
+        }
+
+        if (string.Equals(key, nameof(AutoEmuUrl), StringComparison.Ordinal))
+        {
+            return loc["Log.Setting.AutoEmuUrl"];
         }
 
         // 镜像站：键名 `Mirror`，直接显示成「镜像站 https://… → https://…」比 `Mirror …` 好读得多。
@@ -1484,6 +1494,29 @@ public sealed class MainViewModel : ObservableObject, ILogSink
     public bool UpdateUrlIsEmpty => string.IsNullOrWhiteSpace(UpdateUrl);
 
     /// <summary>
+    /// 「重建 emuMMC」组件包的下载地址（用户 2026-11-21 要求：可在高级设置里改）。
+    /// **留空 = 用默认地址**（<see cref="AutoEmuSource.DefaultUrl"/>）；与上面两个地址框同构。
+    /// </summary>
+    public string AutoEmuUrl
+    {
+        get => _autoEmuUrl;
+        set
+        {
+            if (SetProperty(ref _autoEmuUrl, value))
+            {
+                OnPropertyChanged(nameof(AutoEmuUrlIsInvalid));
+                OnPropertyChanged(nameof(AutoEmuUrlIsEmpty));
+            }
+        }
+    }
+
+    /// <summary>填了组件包地址但推不出仓库（见 <see cref="AutoEmuSource.IsAcceptable"/>）。</summary>
+    public bool AutoEmuUrlIsInvalid => !AutoEmuSource.IsAcceptable(AutoEmuUrl);
+
+    /// <summary>组件包地址框是不是空的（同 <see cref="BootDatUrlIsEmpty"/>）。</summary>
+    public bool AutoEmuUrlIsEmpty => string.IsNullOrWhiteSpace(AutoEmuUrl);
+
+    /// <summary>
     /// 生成完成后是否自动把 out/ 打包成 zip（方便整体拷进 SD 卡）。
     ///
     /// ⚠️ 与 <see cref="SelectedLanguage"/> 同理，这里**不写盘**：它是设置项之一，
@@ -1544,6 +1577,7 @@ public sealed class MainViewModel : ObservableObject, ILogSink
     private string _mirror;
     private string _bootDatUrl;
     private string _updateUrl;
+    private string _autoEmuUrl;
 
     public bool ShowAdvancedSettings
     {
@@ -2991,6 +3025,7 @@ public sealed class MainViewModel : ObservableObject, ILogSink
         target.IncludeBootDat = IncludeBootDat;
         target.BootDatUrl = string.IsNullOrWhiteSpace(BootDatUrl) ? null : BootDatUrl.Trim();
         target.UpdateUrl = string.IsNullOrWhiteSpace(UpdateUrl) ? null : UpdateUrl.Trim();
+        target.AutoEmuUrl = string.IsNullOrWhiteSpace(AutoEmuUrl) ? null : AutoEmuUrl.Trim();
         target.BootStock = BootStock;
         target.BootSysNand = BootSysNand;
         target.BootEmuNand = BootEmuNand;
@@ -3928,6 +3963,171 @@ public sealed class MainViewModel : ObservableObject, ILogSink
         }
     }
 
+    // ── 重建 emuMMC 用的组件包（用户 2026-11-21 要求改为从 Release 下载）──
+
+    /// <summary>
+    /// 取「重建 emuMMC」所需的 6 个文件（payload.bin / nyx.bin / …）。
+    ///
+    /// 来源优先级（前一条能走通就不走后面）：
+    /// <list type="number">
+    ///   <item>本次运行已经取过 → 直接给内存里那份（同一次操作里两次准备不该下两遍）；</item>
+    ///   <item>勾了「优先使用本地资源」且 <c>download/</c> 里有**大小与上游一致**的同名包 → 复用；</item>
+    ///   <item>联网下载 Release 里最新版的 <c>auto-emu.zip</c>（受「优先下载预览版」影响）。</item>
+    /// </list>
+    ///
+    /// ⚠️ 自 2026-11-21 起程序里**不再内嵌**这份组件包（用户要求删掉那 2.7 MB）：
+    /// 离线场景交给「优先使用本地资源」复用 <c>download/</c> 里已下载的文件。
+    /// </summary>
+    public async Task<Dictionary<string, byte[]>> EnsureAutoEmuAssetsAsync(
+        IProgress<AutoEmuProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (_autoEmuAssets is not null)
+        {
+            return _autoEmuAssets;
+        }
+
+        var loc = LocalizationService.Instance;
+
+        if (_releases is null || _download is null)
+        {
+            EnsureHttpClients();
+        }
+
+        try
+        {
+            var (repo, fellBack) = AutoEmuSource.ResolveWithFallback(AutoEmuUrl);
+            if (repo is null)
+            {
+                throw new IOException(loc["AutoEmu.Error.Url"]);
+            }
+
+            if (fellBack)
+            {
+                Log(LogLevel.Warning, string.Format(loc["AutoEmu.Warn.UrlFallback"], AutoEmuSource.DefaultUrl));
+            }
+
+            Log(LogLevel.Info, string.Format(
+                loc["AutoEmu.Log.Source"],
+                repo.DisplayName,
+                PreferPrerelease ? loc["Common.PreRelease"] : loc["Common.Stable"],
+                PreferLocalDownloads ? loc["App.PreferLocalDownloads"] : loc["Common.No"]));
+
+            progress?.Report(new AutoEmuProgress(AutoEmuStage.Query, loc["AutoEmu.Stage.Query"], null));
+
+            // 查询要受「高级设置 → 网络超时」约束（2026-11-21 补齐）：
+            // HttpClient 是按**无限超时**建的（大文件下载用，见 RebuildHttpClients 的注释），
+            // 所以这里必须自己套一个上限，否则 GitHub 半死不活时这一步会一直挂着，
+            // 用户只会看到「正在查询版本」纹丝不动 —— 而且「超时」那一栏看起来像是没生效。
+            using var queryCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            queryCts.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(TimeoutSeconds, 10, 600)));
+
+            IReadOnlyList<ReleaseInfo> releases;
+            try
+            {
+                releases = await _releases!.GetReleasesAsync(repo, 10, queryCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // 只有**自己超时**才转成这条错误；用户按了取消就走上面的原样抛出。
+                throw new IOException(string.Format(
+                    loc["AutoEmu.Error.Timeout"], Math.Clamp(TimeoutSeconds, 10, 600)));
+            }
+
+            // 「优先下载预览版」这个开关对组件包**生效**（用户 2026-11-21 明确要求）：
+            // 与主界面各组件的取值走同一个 SelectBest。
+            var best = ReleaseInfo.SelectBest(releases, PreferPrerelease);
+            if (best is null)
+            {
+                throw new IOException(string.Format(loc["AutoEmu.Error.NoRelease"], repo.DisplayName));
+            }
+
+            Log(LogLevel.Info, string.Format(
+                loc["AutoEmu.Log.Resolved"], repo.DisplayName, best.Tag, best.ChannelText));
+
+            var asset = best.FindAssetByName(AutoEmuSource.AssetName)
+                        ?? best.Assets.FirstOrDefault(a => a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+
+            if (asset is null)
+            {
+                throw new IOException(string.Format(loc["AutoEmu.Error.NoAsset"], AutoEmuSource.AssetName));
+            }
+
+            // 落在 download/AutoEmu/ 这个专用子目录里（2026-11-21 用户要求：
+            // 下载完的组件包放到一个文件夹内，不和其它组件的 zip 混在 download/ 根下）。
+            var folder = AutoEmuSource.DownloadFolder;
+            Directory.CreateDirectory(folder);
+            var path = Path.Combine(folder, AutoEmuSource.BuildAssetFileName(best.Tag));
+            LastAutoEmuZipPath = path;
+
+            if (PreferLocalDownloads && TryReuseLocalFile(path, asset.Size, out var localSize))
+            {
+                Log(LogLevel.Info, string.Format(loc["AutoEmu.Log.Reuse"], Path.GetFileName(path), localSize));
+            }
+            else
+            {
+                Log(LogLevel.Info, string.Format(loc["AutoEmu.Log.DownloadBegin"], asset.Name, asset.SizeText));
+                progress?.Report(new AutoEmuProgress(
+                    AutoEmuStage.Download, loc["AutoEmu.Stage.Download"], 0, asset.SizeText));
+
+                var downloadProgress = new Progress<DownloadProgress>(p =>
+                    progress?.Report(new AutoEmuProgress(
+                        AutoEmuStage.Download,
+                        loc["AutoEmu.Stage.Download"],
+                        p.Percent,
+                        $"{p.ProgressText} · {p.SpeedText}")));
+
+                await _download!.DownloadAsync(
+                    asset.DownloadUrl,
+                    path,
+                    downloadProgress,
+                    cancellationToken,
+                    retry => Log(LogLevel.Warning, string.Format(loc["Log.DownloadFallback"], asset.Name, retry.Reason)));
+            }
+
+            progress?.Report(new AutoEmuProgress(AutoEmuStage.Extract, loc["AutoEmu.Stage.Extract"], 0));
+
+            var assets = await Task.Run(
+                () => AutoPayloadAssets.LoadFromFile(path, (name, fraction) =>
+                    progress?.Report(new AutoEmuProgress(
+                        AutoEmuStage.Extract,
+                        loc["AutoEmu.Stage.Extract"],
+                        fraction * 100d,
+                        string.IsNullOrEmpty(name) ? null : name))),
+                cancellationToken);
+
+            Log(LogLevel.Success, string.Format(loc["AutoEmu.Log.Ready"], best.Tag, assets.Count));
+
+            _autoEmuAssets = assets;
+            return assets;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            var reason = NetworkErrors.Describe(ex);
+            Log(LogLevel.Warning, string.Format(loc["AutoEmu.Warn.Failed"], reason));
+
+            // 程序里**不再内嵌**组件包（用户 2026-11-21 要求删掉那 2.7 MB），
+            // 离线场景交给「优先使用本地资源」复用 download/ 里已下载的那份。
+            throw new IOException(string.Format(loc["AutoEmu.Error.Offline"], reason), ex);
+        }
+    }
+
+    /// <summary>本次运行里已经取到的组件包（见 <see cref="EnsureAutoEmuAssetsAsync"/>）。</summary>
+    private Dictionary<string, byte[]>? _autoEmuAssets;
+
+    /// <summary>
+    /// 最近一次下载（或复用）到的组件包 zip 的磁盘路径。
+    ///
+    /// 为什么需要它：重置窗口的「创建 emuMMC 所需文件」是在**提权子进程**里部署的，
+    /// 那个进程拿不到我们内存里的 byte[]，只能让它自己去读同一个 zip。
+    /// 组件包一旦取到，这里就一定是有效路径（程序里不再有内嵌副本，取不到会直接报错）。
+    /// </summary>
+    public string? LastAutoEmuZipPath { get; private set; }
+
     private void OpenTokenPage()
     {
         try
@@ -4328,6 +4528,265 @@ public sealed class MainViewModel : ObservableObject, ILogSink
         >= 1024 => $"{bytes / 1024d:0.0} KB",
         _ => $"{bytes} B",
     };
+
+    // ── 配置模板（2026-11-21）─────────────────────────────────────
+
+    /// <summary><c>templates/</c> 目录里能用的模板（随程序带「联机」「学习」两份）。</summary>
+    public ObservableCollection<ConfigTemplate> Templates { get; } = new();
+
+    /// <summary>第一次扫描模板目录之后置位（用来区分「启动时那次」与「运行中重扫」）。</summary>
+    private bool _templatesLoaded;
+
+    /// <summary>模板目录（界面上「打开模板目录」用）。</summary>
+    public string TemplateFolder => TemplateStore.Folder;
+
+    /// <summary>
+    /// 重新扫一遍模板（内嵌的 + <c>templates/</c> 里导入的），并刷新显示名。
+    ///
+    /// 两种入口：导入之后、以及**切语言之后**（内嵌模板的名字来自语言包）。
+    /// 已存在的实例按 <see cref="ConfigTemplate.Id"/> 复用，只改 `Name` —— 直接把集合清空重建
+    /// 会把 ComboBox 的选中态冲掉，用户切一下语言就发现"模板没选中了"。
+    /// </summary>
+    internal void RefreshTemplates()
+    {
+        var existing = Templates.ToDictionary(t => t.Id, StringComparer.OrdinalIgnoreCase);
+        var fresh = TemplateStore.List();
+        var countBefore = Templates.Count;
+
+        Templates.Clear();
+        foreach (var template in fresh)
+        {
+            if (existing.TryGetValue(template.Id, out var known))
+            {
+                known.Name = template.Name;
+                Templates.Add(known);
+            }
+            else
+            {
+                Templates.Add(template);
+            }
+        }
+
+        // 只有**运行中**数量变了才记一条（用户手工删/加了文件）。
+        // 启动时那次不记 —— 每次开都刷一行「找到 2 个模板」纯属噪音。
+        if (_templatesLoaded && countBefore != Templates.Count)
+        {
+            Log(LogLevel.Info, string.Format(
+                LocalizationService.Instance["App.Template.Found"],
+                Templates.Count));
+        }
+
+        _templatesLoaded = true;
+    }
+
+    /// <summary>
+    /// 应用一份模板：把 JSON 里的**全部信息**搬到界面上（用户 2026-11-21 明确要求
+    /// 「有配置模板的时候把 json 的所有信息全部导入」）。
+    ///
+    /// 也就是说这是一次「按模板整体还原设置」：组件勾选、每个组件的选项、屏蔽序列号 / 90DNS、
+    /// 引导项三套与它们的标题、语言、主题、Token、代理、镜像、下载源、插件文件槽、各种开关……
+    /// 与读 <c>settings.json</c> 的覆盖面一致。
+    ///
+    /// 模板里有、界面上没有的组件/选项**不视为失败**，逐个记日志后跳过（改版后旧模板还能用）。
+    /// </summary>
+    internal TemplateApplyReport ApplyTemplate(ConfigTemplate template)
+    {
+        var loc = LocalizationService.Instance;
+        var settings = TemplateStore.Load(template);
+        var report = ApplyFrom(settings);
+
+        SaveSettingsQuietly();
+
+        foreach (var missing in report.MissingComponents)
+        {
+            Log(LogLevel.Warning, string.Format(loc["App.Template.MissingComponent"], missing));
+        }
+
+        foreach (var missing in report.MissingOptions)
+        {
+            Log(LogLevel.Warning, string.Format(loc["App.Template.MissingOption"], missing));
+        }
+
+        Log(LogLevel.Success, string.Format(
+            loc["App.Template.Applied"], template.Name, report.Components, report.Options, report.Settings));
+
+        return report;
+    }
+
+    /// <summary>
+    /// 把一整份 <see cref="AppSettings"/> 搬到界面上 —— <see cref="MaterializeInto"/> 的**反向**。
+    ///
+    /// 两处必须成对改：这里漏一个字段，症状是「模板里写着 A，应用后界面还是 B」，
+    /// 而且只在那一个字段上表现，极难靠肉眼发现。回归 `CheckTemplates` 拿模板原文与
+    /// 「应用后再 MaterializeInto 出来的结果」逐字段比对，就是为了钉这一条。
+    ///
+    /// 语言/主题放在最前面（后面的界面文案都跟着它），四个屏蔽开关放在组件勾选**之前**
+    /// （先改勾选会踩 `SysPatchForced` 的反扑，见下面注释）。
+    /// </summary>
+    private TemplateApplyReport ApplyFrom(AppSettings settings)
+    {
+        var missingComponents = new List<string>();
+        var missingOptions = new List<string>();
+        var components = 0;
+        var options = 0;
+        var others = 0;
+
+        // ① 语言 / 主题
+        if (Languages.FirstOrDefault(l => string.Equals(l.Code, settings.Language, StringComparison.OrdinalIgnoreCase)) is { } language)
+        {
+            SelectedLanguage = language;
+            others++;
+        }
+
+        SelectedTheme = Themes.FirstOrDefault(t => t.Mode == ThemeModeCodec.Parse(settings.Theme)) ?? Themes.FirstOrDefault();
+        others++;
+
+        // ② 网络、来源与输出开关
+        GitHubToken = settings.GitHubToken ?? string.Empty;
+        TimeoutSeconds = settings.TimeoutSeconds;
+        Proxy = settings.Proxy ?? string.Empty;
+        Mirror = settings.Mirror ?? string.Empty;
+        PreferPrerelease = settings.PreferPrerelease;
+        PreferLocalDownloads = settings.PreferLocalDownloads;
+        IncludeComponentFilesInOutput = settings.IncludeComponentFilesInOutput;
+        IncludePayloads = settings.IncludePayloads;
+        IncludeBootDat = settings.IncludeBootDat;
+        BootDatUrl = settings.BootDatUrl ?? string.Empty;
+        UpdateUrl = settings.UpdateUrl ?? string.Empty;
+        AutoEmuUrl = settings.AutoEmuUrl ?? string.Empty;
+        AutoPackZip = settings.AutoPackZip;
+        others += 13;
+
+        // ③ 引导项（三个开关 + 三套标题/ID/图）
+        BootStock = settings.BootStock;
+        BootSysNand = settings.BootSysNand;
+        BootEmuNand = settings.BootEmuNand;
+        BootStockTitle = settings.BootStockTitle;
+        BootSysNandTitle = settings.BootSysNandTitle;
+        BootEmuNandTitle = settings.BootEmuNandTitle;
+        BootStockId = settings.BootStockId;
+        BootSysNandId = settings.BootSysNandId;
+        BootEmuNandId = settings.BootEmuNandId;
+        BootStockLogo = settings.BootStockLogo;
+        BootSysNandLogo = settings.BootSysNandLogo;
+        BootEmuNandLogo = settings.BootEmuNandLogo;
+        BootStockIcon = settings.BootStockIcon;
+        BootSysNandIcon = settings.BootSysNandIcon;
+        BootEmuNandIcon = settings.BootEmuNandIcon;
+        others += 15;
+
+        // ④ 屏蔽序列号 / 90DNS / 8G 运存 —— **必须在组件勾选之前**。
+        //
+        // 踩过（2026-11-21）：先勾选再改开关时，两个「屏蔽序列号」是一个个赋值的，
+        // 改第一个的那一刻另一个还是 true ⇒ `SysPatchForced` 仍为 true ⇒
+        // `UpdateForcedSelections()` 立刻把刚关掉的 Sys-patch 又勾回来，
+        // 于是「选完学习再选联机」永远关不掉 Sys-patch（自检里就是这么发现的）。
+        BlankSerialSysmmc = settings.BlankSerialSysmmc;
+        BlankSerialEmummc = settings.BlankSerialEmummc;
+        Use90DnsSysmmc = settings.Use90DnsSysmmc;
+        Use90DnsEmummc = settings.Use90DnsEmummc;
+        Ram8Gb = settings.Ram8Gb;
+        others += 5;
+
+        // ⑤ 下载源与插件文件槽：**只存与默认不同的**（与 MaterializeInto 同一约定），
+        //    所以模板里没写的那一项要清空成"用默认"，而不是保持原值。
+        foreach (var source in RepoSources)
+        {
+            source.Value = settings.RepoOverrides.TryGetValue(source.Key, out var value) ? value : string.Empty;
+        }
+
+        foreach (var slot in AssetSlotGroups.SelectMany(group => group.Slots))
+        {
+            slot.Address = settings.AssetAddresses.TryGetValue(slot.Key, out var address) ? address : string.Empty;
+            slot.FileName = settings.AssetFileNames.TryGetValue(slot.Key, out var fileName) ? fileName : string.Empty;
+        }
+
+        others += settings.RepoOverrides.Count + settings.AssetAddresses.Count + settings.AssetFileNames.Count;
+
+        // ⑥ 组件勾选（程序替用户改，别让 Sys-patch 那条软默认连锁进来）
+        _applyingForcedSelections = true;
+        try
+        {
+            foreach (var pair in settings.Components)
+            {
+                var component = Components.FirstOrDefault(
+                    c => string.Equals(c.Kind.ToString(), pair.Key, StringComparison.OrdinalIgnoreCase));
+
+                if (component is null)
+                {
+                    missingComponents.Add(pair.Key);
+                    continue;
+                }
+
+                component.IsSelected = pair.Value;
+                components++;
+            }
+        }
+        finally
+        {
+            _applyingForcedSelections = false;
+        }
+
+        // ⑦ 组件选项
+        foreach (var pair in settings.OptionValues)
+        {
+            var slash = pair.Key.IndexOf('/');
+            if (slash <= 0 || slash == pair.Key.Length - 1)
+            {
+                missingOptions.Add(pair.Key);
+                continue;
+            }
+
+            var kindName = pair.Key[..slash];
+            var optionKey = pair.Key[(slash + 1)..];
+            var component = Components.FirstOrDefault(
+                c => string.Equals(c.Kind.ToString(), kindName, StringComparison.OrdinalIgnoreCase));
+            var option = component?.FindOption(optionKey);
+
+            if (option is null)
+            {
+                missingOptions.Add(pair.Key);
+                continue;
+            }
+
+            option.Value = pair.Value;
+            options++;
+        }
+
+        // ⑧ 收尾：显隐、冲突提示、按钮可用性都按新状态重算一遍。
+        UpdateForcedSelections();
+        RefreshAutobootChoices();
+        RefreshTitleConflicts();
+        OnPropertyChanged(nameof(CanStart));
+        OnPropertyChanged(nameof(ShowNoSelectionHint));
+        StartCommand.RaiseCanExecuteChanged();
+
+        return new TemplateApplyReport(components, options, others, missingComponents, missingOptions);
+    }
+
+    /// <summary>
+    /// 把用户选的 <c>.json</c> 复制进模板目录并返回新模板（重名会加后缀，不覆盖已有的）。
+    /// 复制进来之后**不自动应用** —— 由界面决定（导入后会选中它，SelectionChanged 顺带应用一次）。
+    /// </summary>
+    internal ConfigTemplate? ImportTemplate(string sourcePath)
+    {
+        var loc = LocalizationService.Instance;
+
+        try
+        {
+            var imported = TemplateStore.Import(sourcePath);
+            RefreshTemplates();
+
+            Log(LogLevel.Success, string.Format(loc["App.Template.Imported"], imported.Name));
+            return Templates.FirstOrDefault(t => string.Equals(t.Id, imported.Id, StringComparison.OrdinalIgnoreCase));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or InvalidDataException or System.Text.Json.JsonException)
+        {
+            Log(LogLevel.Error, string.Format(loc["App.Template.ImportFailed"], ex.Message));
+            return null;
+        }
+    }
 
     private static void OpenFolder(string path)
     {

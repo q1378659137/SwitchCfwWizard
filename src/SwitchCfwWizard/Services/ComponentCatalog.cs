@@ -211,6 +211,15 @@ public sealed class ComponentDefinition
     /// 两者同时非空时 <see cref="Slots"/> 优先（见 <see cref="ComponentCatalog.RepoRequestsFor"/>）。
     /// </summary>
     public IReadOnlyList<AssetSlot> Slots { get; init; } = [];
+
+    /// <summary>
+    /// 合并进 <c>out/</c> 时要**跳过**的路径（相对解压目录，大小写不敏感；给目录名就整棵跳过）。
+    ///
+    /// 用途（用户 2026-11-21）：`sphaira` 的发布包里带一个 <c>nx2/</c> 目录（Switch 2 那一套），
+    /// 拷进 SD 卡没有任何用处，只会在卡根凭空多一个目录。这类「包里夹带的无关目录」都在这里声明，
+    /// 而不是在合并代码里按组件名写 if —— 后者下次加组件时没人知道要改。
+    /// </summary>
+    public IReadOnlyList<string> MergeSkip { get; init; } = [];
 }
 
 /// <summary>组件目录：集中声明四个组件的来源与全部配置项。</summary>
@@ -2055,6 +2064,8 @@ public static class ComponentCatalog
             DisplayName = "sphaira",
             Repos = [],
             Options = [],
+            // 发布包里那个 nx2/ 是 Switch 2 用的那一套，Switch 1 的卡用不上（用户 2026-11-21 要求别拷）。
+            MergeSkip = ["nx2"],
             Slots =
             [
                 new AssetSlot

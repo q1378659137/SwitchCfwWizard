@@ -215,37 +215,55 @@ internal static class SdDisks
 	{
 		VerifyMainVolume(expected, root);
 		using SafeFileHandle disk = Open(expected.DevicePath, 0u);
-		byte[] array = ReadLayout(disk);
-		if (BinaryPrimitives.ReadInt32LittleEndian(array) != 0)
+		return MbrFromLayout(ReadLayout(disk));
+	}
+
+	/// <summary>
+	/// 把 <see cref="ReadLayout"/> 拿到的 <c>DRIVE_LAYOUT_INFORMATION_EX</c> **合成**成 512 字节 MBR。
+	///
+	/// ⚠️ 这里必须合成，不能把 <see cref="ReadLayout"/> 的返回值直接当 MBR 用 ——
+	/// 那个结构里没有引导扇区，字节 510/511 也不是 <c>55 AA</c>。
+	/// 「不动分区表」的三种手术就是拿它去喂 <see cref="SdLayout.FromExistingMbr"/> 的：
+	/// 直接把结构体递进去，用户看到的是「这张卡上没有可识别的分区表（引导扇区签名不对）」，
+	/// 而卡本身好好的（2026-11-21 用户报的就是这个）。
+	/// </summary>
+	internal static byte[] MbrFromLayout(byte[] layout)
+	{
+		if (BinaryPrimitives.ReadInt32LittleEndian(layout) != 0)
 		{
 			throw new IOException("自动创建要求 MBR 分区表。");
 		}
-		byte[] array2 = new byte[512];
-		array.AsSpan(8, 4).CopyTo(array2.AsSpan(440));
-		int num = BinaryPrimitives.ReadInt32LittleEndian(array.AsSpan(4));
-		if (num > 4)
+
+		byte[] mbr = new byte[512];
+		layout.AsSpan(8, 4).CopyTo(mbr.AsSpan(440));
+
+		int count = BinaryPrimitives.ReadInt32LittleEndian(layout.AsSpan(4));
+		if (count > 4)
 		{
 			throw new IOException("TF 卡包含额外分区，无法继续重建。");
 		}
-		for (int i = 0; i < num; i++)
+
+		for (int i = 0; i < count; i++)
 		{
-			ReadOnlySpan<byte> readOnlySpan = array.AsSpan(48 + i * 144, 144);
-			long num2 = BinaryPrimitives.ReadInt64LittleEndian(readOnlySpan.Slice(8, readOnlySpan.Length - 8));
-			long num3 = BinaryPrimitives.ReadInt64LittleEndian(readOnlySpan.Slice(16, readOnlySpan.Length - 16));
-			if (num2 % 512 != 0L || num3 % 512 != 0L)
+			ReadOnlySpan<byte> entry = layout.AsSpan(48 + i * 144, 144);
+			long offset = BinaryPrimitives.ReadInt64LittleEndian(entry.Slice(8, entry.Length - 8));
+			long length = BinaryPrimitives.ReadInt64LittleEndian(entry.Slice(16, entry.Length - 16));
+			if (offset % 512 != 0L || length % 512 != 0L)
 			{
 				throw new IOException("TF 卡分区未按扇区对齐。");
 			}
-			array2[450 + i * 16] = readOnlySpan[32];
+
+			mbr[450 + i * 16] = entry[32];
 			checked
 			{
-				BinaryPrimitives.WriteUInt32LittleEndian(array2.AsSpan(unchecked(454 + i * 16)), (uint)unchecked(num2 / 512));
-				BinaryPrimitives.WriteUInt32LittleEndian(array2.AsSpan(unchecked(458 + i * 16)), (uint)unchecked(num3 / 512));
+				BinaryPrimitives.WriteUInt32LittleEndian(mbr.AsSpan(unchecked(454 + i * 16)), (uint)unchecked(offset / 512));
+				BinaryPrimitives.WriteUInt32LittleEndian(mbr.AsSpan(unchecked(458 + i * 16)), (uint)unchecked(length / 512));
 			}
 		}
-		array2[510] = 85;
-		array2[511] = 170;
-		return array2;
+
+		mbr[510] = 85;
+		mbr[511] = 170;
+		return mbr;
 	}
 
 	internal static string MountMain(SdDevice expected, SdLayout layout)

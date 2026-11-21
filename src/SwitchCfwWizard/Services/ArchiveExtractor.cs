@@ -171,11 +171,16 @@ public static class ArchiveExtractor
     /// <summary>
     /// 把目录内容递归合并到目标目录（同名覆盖）。
     /// 返回**相对目标目录的路径**列表，调用方据此把合并结果记进清单。
+    ///
+    /// <paramref name="skip"/> 是**要跳过的路径前缀**（相对源目录，大小写不敏感）：
+    /// 传 <c>"nx2"</c> 就跳过整个 <c>nx2/</c> 子树，传 <c>"config/foo.ini"</c> 只跳过那一个文件。
+    /// 声明在哪见 <see cref="ComponentDefinition.MergeSkip"/>。
     /// </summary>
     public static IReadOnlyList<string> MergeDirectory(
         string sourceDirectory,
         string destinationDirectory,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<string>? skip = null)
     {
         var merged = new List<string>();
         if (!Directory.Exists(sourceDirectory))
@@ -190,6 +195,12 @@ public static class ArchiveExtractor
             cancellationToken.ThrowIfCancellationRequested();
 
             var relative = Path.GetRelativePath(sourceDirectory, file);
+
+            if (IsSkipped(relative, skip))
+            {
+                continue;
+            }
+
             var target = Path.Combine(destinationDirectory, relative);
 
             EnsureParent(target);
@@ -198,6 +209,39 @@ public static class ArchiveExtractor
         }
 
         return merged;
+    }
+
+    /// <summary>
+    /// <paramref name="relative"/> 是否落在 <paramref name="skip"/> 的某一条之下。
+    ///
+    /// 比的是**路径段**而不是字符前缀：<c>nx2</c> 必须跳过 <c>nx2/…</c> 与 <c>nx2</c> 本身，
+    /// 但**不能**误伤 <c>nx2readme.txt</c> 这种同前缀的文件名。
+    /// </summary>
+    internal static bool IsSkipped(string relative, IReadOnlyList<string>? skip)
+    {
+        if (skip is null || skip.Count == 0)
+        {
+            return false;
+        }
+
+        var normalized = relative.Replace('\\', '/');
+
+        foreach (var entry in skip)
+        {
+            if (string.IsNullOrWhiteSpace(entry))
+            {
+                continue;
+            }
+
+            var prefix = entry.Replace('\\', '/').Trim('/');
+            if (normalized.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

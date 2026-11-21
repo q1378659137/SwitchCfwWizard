@@ -537,6 +537,120 @@ public partial class App : Application
         report.AppendLine(
             $"SELFTEST: bootdat-card titles={bootDatCount} boxes={cardBoxes.Count} checked={bootDatChecked}");
 
+        // ── 配置模板（2026-11-21）──
+        // 用户要求「选模板后自动勾选上对应位置」「把 json 的所有信息全部导入」。
+        // 这里真的调一次 ApplyTemplate，然后：
+        //   ① 核对界面状态（勾选 / 选项 / 屏蔽开关）；
+        //   ② 用 MaterializeInto 把界面搬回一份 AppSettings，与模板**逐字段**比对 ——
+        //      这一条才防得住「某个字段忘了搬」（那种 bug 只在单个字段上表现，肉眼看不出来）。
+        // 之后**原样还原**：自检不能把用户的勾选留在测试状态。
+        var tplVm = window.DataContext as MainViewModel;
+        var templates = tplVm?.Templates ?? [];
+        var studyTemplate = templates.FirstOrDefault(t => t.Id == "study");
+        var playTemplate = templates.FirstOrDefault(t => t.Id == "play");
+        var templatesPresent = templates.Count >= 2 && studyTemplate is not null && playTemplate is not null;
+
+        var templateApplyOk = false;
+        var templateFullOk = false;
+        var templateFullDetail = "skipped";
+        var templateDetail = "skipped";
+
+        if (templatesPresent && tplVm is not null)
+        {
+            var selectedBackup = tplVm.Components.ToDictionary(c => c.Kind, c => c.IsSelected);
+            var optionBackup = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var component in tplVm.Components)
+            {
+                foreach (var option in component.OptionGroups.SelectMany(g => g.Options))
+                {
+                    optionBackup[$"{component.Kind}/{option.Key}"] = option.Value;
+                }
+            }
+
+            var blankSys = tplVm.BlankSerialSysmmc;
+            var blankEmu = tplVm.BlankSerialEmummc;
+            var dnsSys = tplVm.Use90DnsSysmmc;
+            var dnsEmu = tplVm.Use90DnsEmummc;
+
+            try
+            {
+                tplVm.ApplyTemplate(studyTemplate!);
+                var studySysPatch = tplVm.Components.First(c => c.Kind == ComponentKind.SysPatch).IsSelected;
+                var studyDnsMitm = tplVm.Components
+                    .First(c => c.Kind == ComponentKind.Atmosphere).GetOptionValue("enable_dns_mitm");
+                var studyBlank = tplVm.BlankSerialSysmmc && tplVm.BlankSerialEmummc
+                                 && tplVm.Use90DnsSysmmc && tplVm.Use90DnsEmummc;
+
+                // 全量核对：界面 → 存档 的映射再跑一遍，结果必须与模板一致
+                var materialize = typeof(MainViewModel).GetMethod("MaterializeInto",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                var expected = TemplateStore.Load(studyTemplate!);
+                var actual = new AppSettings();
+                materialize?.Invoke(tplVm, [actual]);
+                var diffs = materialize is null ? ["MaterializeInto 找不到"] : CompareSettings(expected, actual);
+                templateFullOk = diffs.Count == 0;
+                templateFullDetail = templateFullOk ? "same" : string.Join("、", diffs.Take(6));
+
+                tplVm.ApplyTemplate(playTemplate!);
+                var playSysPatchOff = !tplVm.Components.First(c => c.Kind == ComponentKind.SysPatch).IsSelected;
+                var playDnsMitm = tplVm.Components
+                    .First(c => c.Kind == ComponentKind.Atmosphere).GetOptionValue("enable_dns_mitm");
+                var playBlankOff = !tplVm.BlankSerialSysmmc && !tplVm.BlankSerialEmummc;
+
+                templateApplyOk = studySysPatch && studyDnsMitm == "1" && studyBlank
+                                  && playSysPatchOff && playDnsMitm == "0" && playBlankOff;
+
+                templateDetail =
+                    $"study(syspatch={studySysPatch},dns_mitm={studyDnsMitm},blank={studyBlank}) "
+                    + $"play(syspatch_off={playSysPatchOff},dns_mitm={playDnsMitm},blank_off={playBlankOff})";
+            }
+            finally
+            {
+                // 还原：勾选、每个选项、四个开关都放回去，别让自检改了用户的配置。
+                foreach (var component in tplVm.Components)
+                {
+                    component.IsSelected = selectedBackup[component.Kind];
+                }
+
+                foreach (var component in tplVm.Components)
+                {
+                    foreach (var option in component.OptionGroups.SelectMany(g => g.Options))
+                    {
+                        if (optionBackup.TryGetValue($"{component.Kind}/{option.Key}", out var value))
+                        {
+                            option.Value = value;
+                        }
+                    }
+                }
+
+                tplVm.BlankSerialSysmmc = blankSys;
+                tplVm.BlankSerialEmummc = blankEmu;
+                tplVm.Use90DnsSysmmc = dnsSys;
+                tplVm.Use90DnsEmummc = dnsEmu;
+            }
+        }
+
+        report.AppendLine(
+            $"SELFTEST: templates present={templatesPresent} count={templates.Count} apply={templateApplyOk} {templateDetail}");
+        report.AppendLine(
+            $"SELFTEST: template-full-import ok={templateFullOk} diff={templateFullDetail}");
+
+        if (!templatesPresent)
+        {
+            themeProblems.Add("输出目录里应自带「联机」「学习」两份配置模板（检查 csproj 的 EmbeddedResource 是否丢）");
+        }
+        else if (!templateApplyOk)
+        {
+            themeProblems.Add("应用配置模板没有真的改到界面（勾选 / 选项 / 屏蔽开关至少有一处没生效）");
+        }
+
+        if (templatesPresent && !templateFullOk)
+        {
+            themeProblems.Add(
+                "模板没有把 json 的全部信息导入（应用后再存回去与模板不一致："
+                + templateFullDetail + "）");
+        }
+
         // ── 与 Sys-patch 卡片逐项比对（用户 2026-09-22：「以 Sys-patch 那张卡片为准」）──
         // 「我写了 FontSize=14」证明不了什么 —— 直接拿**运行时那张卡片**当参照物：
         // 标题 / 说明 / 状态文字三项的字号、字重、前景色都要与它一致。
@@ -761,6 +875,42 @@ public partial class App : Application
                     + $"检查更新在 x={updateLeft:0.#}、宽 {updateWidth:0.#}"
                     + $" —— 左边缘差 {Math.Abs(updateLeft - bootDatLeft):0.#}、"
                     + $"宽差 {Math.Abs(updateWidth - bootDatWidth):0.#} 像素");
+            }
+        }
+
+        // 用实际布局检查三个引导项的输入框左右边缘，包括带选择／清除按钮的行。
+        var bootFields = new[]
+        {
+            nameof(MainViewModel.BootStockTitle), nameof(MainViewModel.BootStockId),
+            nameof(MainViewModel.BootStockLogo), nameof(MainViewModel.BootStockIcon),
+            nameof(MainViewModel.BootSysNandTitle), nameof(MainViewModel.BootSysNandId),
+            nameof(MainViewModel.BootSysNandLogo), nameof(MainViewModel.BootSysNandIcon),
+            nameof(MainViewModel.BootEmuNandTitle), nameof(MainViewModel.BootEmuNandId),
+            nameof(MainViewModel.BootEmuNandLogo), nameof(MainViewModel.BootEmuNandIcon),
+        };
+
+        var bootFieldBounds = bootFields.Select(name =>
+        {
+            var box = BoxFor(name);
+            if (box is null || !box.IsVisible || box.ActualWidth <= 0)
+            {
+                themeProblems.Add($"找不到可见的引导项输入框：{name}");
+                return (Name: name, Left: double.NaN, Right: double.NaN);
+            }
+
+            var left = LeftIn(box);
+            return (Name: name, Left: left, Right: left + box.ActualWidth);
+        }).ToArray();
+
+        var firstBootField = bootFieldBounds[0];
+        report.AppendLine($"SELFTEST: boot-field-alignment left={firstBootField.Left:0.#} right={firstBootField.Right:0.#}");
+
+        foreach (var field in bootFieldBounds.Skip(1))
+        {
+            if (Math.Abs(field.Left - firstBootField.Left) > 0.5
+                || Math.Abs(field.Right - firstBootField.Right) > 0.5)
+            {
+                themeProblems.Add($"引导项输入框 {field.Name} 的左右边缘未与 {firstBootField.Name} 对齐");
             }
         }
 
@@ -1065,7 +1215,8 @@ public partial class App : Application
 
             var required = new[]
             {
-                "DevicePicker", "LayoutBarHost", "MainSizeText", "EmuSizeText", "ConfirmPanel", "ResultPanel",
+                "DevicePicker", "LayoutBarHost", "MainSizeBox", "EmuSizeBox", "RangeHint",
+                "ConfirmPanel", "ResultPanel",
             };
             var missing = required.Where(n => probe.FindName(n) is null).ToList();
 
@@ -1149,20 +1300,211 @@ public partial class App : Application
             // 拖动：调用 Thumb 的 DragDelta 最终会走的那个方法。
             // ⚠️ 这一条防的是「方块完全拖不动」—— 原先它读 `_device`，而那个字段只在
             //    「下一步」里赋值，所以在①分区设置里拖动时永远是 null、直接 return，且没有报错。
-            var beforeDrag = probe.MainSizeText.Text;
+            var beforeDrag = probe.MainSizeBox.Text;
             var movedRight = probe.ApplyDragFraction(0.95);
-            var afterRight = probe.MainSizeText.Text;
+            var afterRight = probe.MainSizeBox.Text;
             var movedLeft = probe.ApplyDragFraction(0.05);
-            var afterLeft = probe.MainSizeText.Text;
+            var afterLeft = probe.MainSizeBox.Text;
 
             report.AppendLine(
                 $"SELFTEST: sdreset-drag {beforeDrag} -> right:{afterRight} -> left:{afterLeft} "
                 + $"moved={movedRight}/{movedLeft}");
 
+            // 手动输入：直接设 emuMMC = 6.5 GiB（**带小数**），主分区那一栏必须跟着变；
+            // 再设主分区 = 4.25 GiB，emuMMC 必须反过来变大、且主分区回填成 4.25 左右。
+            // 用小数而不是整数是关键：早期实现把 emuMMC 存成 int，输 6.5 会被静默圆成 7 ——
+            // 「输入了但没按输入的值算」正是用户 2026-11-20 报的那条。
+            var emuBefore = probe.EmuSizeBox.Text;
+            var typedEmu = probe.ApplyEmuGiB(6.5);
+            var emuAfter = probe.EmuSizeBox.Text;
+            var mainAfterTypedEmu = probe.MainSizeBox.Text;
+            var typedMain = probe.ApplyMainGiB(4.25);
+            var emuAfterMain = probe.EmuSizeBox.Text;
+            var mainAfterMain = probe.MainSizeBox.Text;
+
+            report.AppendLine(
+                $"SELFTEST: sdreset-input emu {emuBefore}→{emuAfter} (main {mainAfterTypedEmu}) "
+                + $"main=4.25→emu {emuAfterMain} / main {mainAfterMain} applied={typedEmu}/{typedMain}");
+
+            var mainParsed = double.TryParse(mainAfterMain,
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var mainValue) ? mainValue : -1d;
+
+            if (!typedEmu || !typedMain || emuAfter != "6.50"
+                || emuAfterMain == emuAfter
+                || Math.Abs(mainParsed - 4.25d) > 0.05d)
+            {
+                themeProblems.Add(
+                    $"手动输入容量没按原值生效（emu {emuBefore}→{emuAfter}，输入主分区 4.25 后 "
+                    + $"emu={emuAfterMain}、主分区={mainAfterMain}）");
+            }
+
             if (!movedRight || !movedLeft || afterRight == beforeDrag || afterLeft == afterRight)
             {
                 themeProblems.Add("拖动分隔条没有改变容量（主分区大小应随拖动变化）");
             }
+
+            // 六个**同级**的做法（用户 2026-11-21：四个手术不再挂在「恢复单分区」底下）：
+            // ① 六个选项必须真的存在（XAML 写错名字，界面上就少一项，但不会有任何报错）；
+            // ② 它们必须是**同一组单选**，勾一个自动取消其他五个（互斥由 GroupName 保证，
+            //    代码里那份「挨个 SetIsChecked(false)」已经删掉了）；
+            // ③ 勾选必须真的改变布局区：不动分区表的三种要收起布局条，重新分区那种要露出布局条
+            //    —— 这条防的是「勾了但 CurrentMode 没跟上」，那会让界面和实际写盘的做法不一致。
+            var modes = new[]
+            {
+                probe.WithEmu, probe.OnlyFormat,
+                probe.ModeFormatMain, probe.ModeFormatEmu, probe.ModeCreateFiles, probe.ModeRepartition,
+            };
+
+            var modesPresent = modes.All(b => b is not null);
+            var defaultOnlyRebuild = modesPresent
+                                     && probe.WithEmu.IsChecked == true
+                                     && modes.Skip(1).All(b => b.IsChecked != true);
+
+            void Pick(System.Windows.Controls.RadioButton radio) => radio.IsChecked = true;
+
+            Pick(probe.ModeFormatMain);
+            var mainExclusive = probe.ModeFormatMain.IsChecked == true
+                                && probe.WithEmu.IsChecked != true
+                                && probe.OnlyFormat.IsChecked != true;
+            var mainHidesBar = probe.LayoutBarHost.Visibility == System.Windows.Visibility.Collapsed;
+
+            Pick(probe.ModeFormatEmu);
+            var emuHidesBar = probe.LayoutBarHost.Visibility == System.Windows.Visibility.Collapsed
+                              && probe.ModeFormatMain.IsChecked != true;
+
+            Pick(probe.ModeCreateFiles);
+            var filesHidesBar = probe.LayoutBarHost.Visibility == System.Windows.Visibility.Collapsed
+                                && probe.ModeFormatEmu.IsChecked != true;
+
+            Pick(probe.ModeRepartition);
+            var repartitionShowsBar = probe.LayoutBarHost.Visibility == System.Windows.Visibility.Visible
+                                      && probe.ModeCreateFiles.IsChecked != true;
+
+            Pick(probe.OnlyFormat);
+            var formatOnlyHidesBar = probe.LayoutBarHost.Visibility == System.Windows.Visibility.Collapsed
+                                     && probe.ModeRepartition.IsChecked != true;
+
+            // 组件包进度卡：两条进度条 + 两个文案位必须在，且默认不显示（还没开始下载）。
+            var emuPanelOk = probe.EmuDownloadBar is not null && probe.EmuExtractBar is not null
+                             && probe.EmuDownloadLabel is not null && probe.EmuExtractLabel is not null
+                             && probe.EmuPreparePanel.Visibility == System.Windows.Visibility.Collapsed;
+
+            report.AppendLine(
+                $"SELFTEST: sdreset-modes present={modesPresent} default-rebuild={defaultOnlyRebuild} "
+                + $"exclusive={mainExclusive} bars=hide:{mainHidesBar}/{emuHidesBar}/{filesHidesBar}/{formatOnlyHidesBar} "
+                + $"show:{repartitionShowsBar} emu-panel={(emuPanelOk ? "ok" : "bad")}");
+
+            if (!modesPresent)
+            {
+                themeProblems.Add("六个做法没有全部出现在「分区设置」里（重建 / 恢复单分区 / 格式化主分区 / 格式化 emuMMC / 建文件 / 重新分区）");
+            }
+
+            if (!defaultOnlyRebuild)
+            {
+                themeProblems.Add("默认应只选中「格式化并重建 emuMMC」，其余五个都不选中");
+            }
+
+            if (!mainExclusive)
+            {
+                themeProblems.Add("六个选项必须是同一组单选：勾上「仅格式化主数据分区」后，「重建」与「恢复单分区」都应自动取消");
+            }
+
+            if (!(mainHidesBar && emuHidesBar && filesHidesBar && formatOnlyHidesBar))
+            {
+                themeProblems.Add(
+                    $"不动分区表的做法应收起布局条（主分区 {mainHidesBar} / emuMMC {emuHidesBar} / "
+                    + $"建文件 {filesHidesBar} / 恢复单分区 {formatOnlyHidesBar}）");
+            }
+
+            if (!repartitionShowsBar)
+            {
+                themeProblems.Add("「重新分区主数据分区和 emuMMC」要写分区表，布局条必须照常显示（否则用户没法定容量）");
+            }
+
+            if (!emuPanelOk)
+            {
+                themeProblems.Add("组件包进度卡缺少进度条/文案元素，或一开始就显示着");
+            }
+
+            // 确认页的标题 / 警告 / 「知晓」文案必须跟着做法走。
+            // 用户 2026-11-21 报的正是这个：选了「创建 emuMMC 所需文件」（只写几个文件），
+            // 确认页却说「将删除整张卡的所有数据」—— 于是根本不敢往下点。
+            // 这里逐个做法调一次那段换文案的方法，拿**语言包里的原文**比对，而不是「看起来不一样」。
+            var applyWording = typeof(SdResetWindow).GetMethod("ApplyConfirmWording",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+            var wordingOk = applyWording is not null;
+
+            string WordingFor(System.Windows.Controls.RadioButton radio)
+            {
+                Pick(radio);
+                applyWording!.Invoke(probe, null);
+                return probe.ConfirmWarning.Text;
+            }
+
+            var wordingCreate = wordingOk ? WordingFor(probe.ModeCreateFiles) : string.Empty;
+            var wordingEmu = wordingOk ? WordingFor(probe.ModeFormatEmu) : string.Empty;
+            var wordingMain = wordingOk ? WordingFor(probe.ModeFormatMain) : string.Empty;
+            var wordingDestructive = wordingOk ? WordingFor(probe.WithEmu) : string.Empty;
+
+            if (wordingOk)
+            {
+                wordingOk = wordingCreate == sdLoc["SdReset.Confirm.WarningCreateFiles"]
+                            && wordingEmu == sdLoc["SdReset.Confirm.WarningFormatEmu"]
+                            && wordingMain == sdLoc["SdReset.Confirm.WarningFormatMain"]
+                            && wordingDestructive == sdLoc["SdReset.Confirm.Warning"]
+                            // 最后这条才是用户真正在意的：只写文件的那一档**不能**再说整卡。
+                            && wordingCreate != sdLoc["SdReset.Confirm.Warning"];
+            }
+
+            report.AppendLine($"SELFTEST: sdreset-confirm wording={(wordingOk ? "ok" : "bad")} create=「{wordingCreate}」");
+
+            if (!wordingOk)
+            {
+                themeProblems.Add(
+                    "确认页文案没按做法切换（「创建 emuMMC 所需文件」不该提示会清空整张卡）");
+            }
+
+            // 右下角那个按钮也必须跟着做法走（用户 2026-11-21：「创建文件」时还写着「清空并开始」）。
+            var startTextMethod = typeof(SdResetWindow).GetMethod("ConfirmStartText",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+
+            string StartTextFor(System.Windows.Controls.RadioButton radio)
+            {
+                Pick(radio);
+                return (string)startTextMethod!.Invoke(probe, null)!;
+            }
+
+            var startTextOk = startTextMethod is not null;
+            var startCreate = startTextOk ? StartTextFor(probe.ModeCreateFiles) : string.Empty;
+            var startMain = startTextOk ? StartTextFor(probe.ModeFormatMain) : string.Empty;
+            var startEmu = startTextOk ? StartTextFor(probe.ModeFormatEmu) : string.Empty;
+            var startRebuild = startTextOk ? StartTextFor(probe.WithEmu) : string.Empty;
+
+            if (startTextOk)
+            {
+                startTextOk = startCreate == sdLoc["SdReset.Button.StartCreateFiles"]
+                          && startMain == sdLoc["SdReset.Button.StartFormatMain"]
+                          && startEmu == sdLoc["SdReset.Button.StartFormatEmu"]
+                          && startRebuild == sdLoc["SdReset.Button.Start"]
+                          // 关键一条：三种手术都不能沿用「清空并开始」
+                          && startCreate != sdLoc["SdReset.Button.Start"]
+                          && startMain != sdLoc["SdReset.Button.Start"]
+                          && startEmu != sdLoc["SdReset.Button.Start"];
+            }
+
+            report.AppendLine($"SELFTEST: sdreset-start-button text={(startTextOk ? "ok" : "bad")} create=「{startCreate}」");
+
+            if (!startTextOk)
+            {
+                themeProblems.Add(
+                    "确认页主按钮文案没按做法切换（三种手术都不该写「清空并开始」）");
+            }
+
+            // 复位成默认档，后面的截图与其它断言按「重建」跑。
+            probe.WithEmu.IsChecked = true;
+            applyWording?.Invoke(probe, null);
 
             // 提示弹窗也是新窗口：不构造一次，XAML 里写错资源键只有用户点到才会炸。
             var notice = new NoticeDialog();
@@ -1382,6 +1724,54 @@ public partial class App : Application
         Shutdown(errors.Count == 0
                  && themeProblems.Count == 0
                  && report.ToString().Contains("window rendered", StringComparison.Ordinal) ? 0 : 2);
+    }
+
+    /// <summary>
+    /// 逐字段比较两份 <see cref="AppSettings"/>，返回差异描述（空表 = 完全一致）。
+    ///
+    /// 为什么要这么比：`MainViewModel.ApplyFrom`（存档 → 界面）与 `MaterializeInto`（界面 → 存档）
+    /// 是一对**手工镜像**。漏搬一个字段的症状只是「模板里写着 A，应用后界面还是 B」，
+    /// 而且只在那一个字段上表现 —— 肉眼几乎发现不了。让它们互为逆运算，一漏就在自检里露出来。
+    /// </summary>
+    private static List<string> CompareSettings(AppSettings expected, AppSettings actual)
+    {
+        var diffs = new List<string>();
+
+        foreach (var property in typeof(AppSettings).GetProperties())
+        {
+            var left = property.GetValue(expected);
+            var right = property.GetValue(actual);
+
+            if (left is IDictionary<string, bool> leftFlags && right is IDictionary<string, bool> rightFlags)
+            {
+                if (leftFlags.Count != rightFlags.Count
+                    || leftFlags.Any(p => !rightFlags.TryGetValue(p.Key, out var flag) || flag != p.Value))
+                {
+                    diffs.Add($"{property.Name}[{leftFlags.Count}≠{rightFlags.Count}]");
+                }
+
+                continue;
+            }
+
+            if (left is IDictionary<string, string> leftMap && right is IDictionary<string, string> rightMap)
+            {
+                if (leftMap.Count != rightMap.Count
+                    || leftMap.Any(p => !rightMap.TryGetValue(p.Key, out var value)
+                                        || !string.Equals(value, p.Value, StringComparison.Ordinal)))
+                {
+                    diffs.Add($"{property.Name}[{leftMap.Count}≠{rightMap.Count}]");
+                }
+
+                continue;
+            }
+
+            if (!Equals(left, right))
+            {
+                diffs.Add($"{property.Name}({left ?? "null"}≠{right ?? "null"})");
+            }
+        }
+
+        return diffs;
     }
 
     private static void TryWriteText(string path, string content)

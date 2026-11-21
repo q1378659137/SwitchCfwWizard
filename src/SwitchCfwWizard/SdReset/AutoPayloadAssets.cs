@@ -1,5 +1,8 @@
 // 移植自 yijianhuanbao（源文件 AutoPayloadAssets.cs，sha256 9696bacbe8c6…）。
-// 只改了命名空间；逻辑与原版逐行一致 —— 改动请同时对照源项目。
+// 2026-11-21 修改：组件包改为**从 GitHub Release 下载**（用户要求），
+// 且程序里**不再内嵌**那份 2.7 MB 的 <c>NsToolbox.AutoEmu.zip</c> ——
+// 离线场景交给「优先使用本地资源」复用 download/AutoEmu_*.zip。
+// 所以这个类现在只剩一件事：把磁盘上的 zip 读出来并逐个文件校验。
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -12,32 +15,34 @@ namespace SwitchCfwWizard.SdReset;
 
 internal static class AutoPayloadAssets
 {
-	internal static int ExportSource(string destination)
+	/// <summary>
+	/// 读**磁盘上**的组件包（下载得到的 <c>auto-emu.zip</c>，或 <c>download/</c> 里已下载的那份）。
+	///
+	/// <paramref name="onEntry"/> 每读出一个文件回调一次（名字, 0～1），
+	/// 只用于界面上那条「解压进度」。
+	///
+	/// 校验按包内自带的 <c>sha256.json</c> **逐个文件**做：所以「下到一半的残骸」「被改过的包」
+	/// 都进不来。
+	/// </summary>
+	internal static Dictionary<string, byte[]> LoadFromFile(string path, Action<string, double>? onEntry = null)
 	{
-		using Stream stream = typeof(AutoPayloadAssets).Assembly.GetManifestResourceStream("NsToolbox.AutoEmu.zip") ?? throw new IOException("内置自动创建组件缺失。");
-		using ZipArchive zipArchive = new ZipArchive(stream, ZipArchiveMode.Read);
-		using Stream stream2 = (zipArchive.GetEntry("source.zip") ?? throw new IOException("内置组件源码缺失。")).Open();
-		if (!Path.IsPathRooted(destination))
-		{
-			string? baseDirectory = Path.GetDirectoryName(Environment.GetEnvironmentVariable("NS_TOOLBOX_EXECUTABLE") ?? Environment.ProcessPath ?? throw new IOException("无法确定导出位置，请指定绝对路径。"));
-			destination = Path.Combine(baseDirectory ?? throw new IOException("无法确定导出位置，请指定绝对路径。"), destination);
-		}
-		using FileStream fileStream = new FileStream(Path.GetFullPath(destination), FileMode.CreateNew, FileAccess.Write, FileShare.None);
-		stream2.CopyTo(fileStream);
-		fileStream.Flush(flushToDisk: true);
-		return 0;
+		using FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+		return ReadZip(stream, onEntry);
 	}
 
-	internal static Dictionary<string, byte[]> Load()
+	private static Dictionary<string, byte[]> ReadZip(Stream stream, Action<string, double>? onEntry)
 	{
-		using Stream stream = typeof(AutoPayloadAssets).Assembly.GetManifestResourceStream("NsToolbox.AutoEmu.zip") ?? throw new IOException("内置自动创建组件缺失，请重新下载工具。");
 		using ZipArchive zipArchive = new ZipArchive(stream, ZipArchiveMode.Read);
 		using Stream utf8Json = (zipArchive.GetEntry("sha256.json") ?? throw new IOException("自动创建组件索引缺失。")).Open();
 		Dictionary<string, string> dictionary = JsonSerializer.Deserialize<Dictionary<string, string>>(utf8Json) ?? throw new IOException("组件索引无效。");
 		Dictionary<string, byte[]> dictionary2 = new Dictionary<string, byte[]>(StringComparer.Ordinal);
 		string[] assetNames = EmuTaskFiles.AssetNames;
-		foreach (string name in assetNames)
+
+		for (var index = 0; index < assetNames.Length; index++)
 		{
+			string name = assetNames[index];
+			onEntry?.Invoke(name, index / (double)assetNames.Length);
+
 			ZipArchiveEntry? zipArchiveEntry = zipArchive.GetEntry(name) ?? throw new IOException("自动创建组件不完整。");
 			long length = zipArchiveEntry.Length;
 			bool flag = ((length <= 0 || length > 16777216) ? true : false);
@@ -59,6 +64,7 @@ internal static class AutoPayloadAssets
 		{
 			throw new IOException("自动创建启动文件超过安全大小。");
 		}
+		onEntry?.Invoke(string.Empty, 1d);
 		return dictionary2;
 	}
 }

@@ -88,6 +88,16 @@ public sealed class AppSettings
     public string? BootDatUrl { get; set; }
 
     /// <summary>
+    /// 「重建 emuMMC」所用组件包的下载地址。留空 = 用默认地址
+    /// （<see cref="AutoEmuSource.DefaultUrl"/>，即 <c>q1378659137/AutoEmu</c> 的 Releases）。
+    ///
+    /// 用户 2026-11-21 要求的第二项：地址可在「高级设置」里改。
+    /// 这里同样**只存用户原话**，解析在使用时做（见 <see cref="AutoEmuSource.ResolveRepo"/>）：
+    /// 网页地址、<c>/releases</c>、API 地址、裸 <c>owner/name</c> 都认，认不出就按默认走并在日志里说出来。
+    /// </summary>
+    public string? AutoEmuUrl { get; set; }
+
+    /// <summary>
     /// 「检查更新」查版本用的地址。留空 = 用默认地址（<see cref="Services.UpdateSource.DefaultUrl"/>，
     /// 一条 GitHub 的 releases 网页地址）。
     ///
@@ -228,25 +238,7 @@ public static class SettingsStore
                 var settings = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions);
                 if (settings is not null)
                 {
-                    settings.Components ??= new Dictionary<string, bool>();
-                    settings.OptionValues ??= new Dictionary<string, string>();
-                    settings.RepoOverrides ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    settings.AssetAddresses ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    settings.AssetFileNames ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    settings.BootStockTitle ??= string.Empty;
-                    settings.BootSysNandTitle ??= string.Empty;
-                    settings.BootEmuNandTitle ??= string.Empty;
-                    settings.BootStockId ??= string.Empty;
-                    settings.BootSysNandId ??= string.Empty;
-                    settings.BootEmuNandId ??= string.Empty;
-                    settings.BootStockLogo ??= string.Empty;
-                    settings.BootSysNandLogo ??= string.Empty;
-                    settings.BootEmuNandLogo ??= string.Empty;
-                    settings.BootStockIcon ??= string.Empty;
-                    settings.BootSysNandIcon ??= string.Empty;
-                    settings.BootEmuNandIcon ??= string.Empty;
-                    Migrate(settings);
-                    return settings;
+                    return Normalize(settings);
                 }
             }
         }
@@ -269,6 +261,37 @@ public static class SettingsStore
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// 把刚反序列化出来的对象补齐成可用状态：字典字段不为 null、字符串字段不为 null、
+    /// 旧版单开关迁移到新字段。
+    ///
+    /// **两处共用**（2026-11-21 抽出来）：<see cref="Load"/> 读 <c>settings.json</c>，
+    /// 以及 <see cref="TemplateStore"/> 读配置模板 —— 模板的格式就是 settings.json，
+    /// 若只在 Load 里补，一份手写的模板会因为某个字符串字段是 null 而在界面上炸出 NRE。
+    /// </summary>
+    public static AppSettings Normalize(AppSettings settings)
+    {
+        settings.Components ??= new Dictionary<string, bool>();
+        settings.OptionValues ??= new Dictionary<string, string>();
+        settings.RepoOverrides ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        settings.AssetAddresses ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        settings.AssetFileNames ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        settings.BootStockTitle ??= string.Empty;
+        settings.BootSysNandTitle ??= string.Empty;
+        settings.BootEmuNandTitle ??= string.Empty;
+        settings.BootStockId ??= string.Empty;
+        settings.BootSysNandId ??= string.Empty;
+        settings.BootEmuNandId ??= string.Empty;
+        settings.BootStockLogo ??= string.Empty;
+        settings.BootSysNandLogo ??= string.Empty;
+        settings.BootEmuNandLogo ??= string.Empty;
+        settings.BootStockIcon ??= string.Empty;
+        settings.BootSysNandIcon ??= string.Empty;
+        settings.BootEmuNandIcon ??= string.Empty;
+        Migrate(settings);
+        return settings;
     }
 
     /// <summary>

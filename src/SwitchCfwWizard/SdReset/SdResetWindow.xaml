@@ -87,7 +87,32 @@
                                          Content="{loc:Loc SdReset.Mode.FormatOnly}"
                                          Checked="Options_Changed" />
                             <TextBlock Text="{loc:Loc SdReset.Mode.FormatOnly.Hint}" Style="{StaticResource HintText}"
-                                       Margin="20,4,0,0" />
+                                       Margin="20,4,0,12" />
+
+                            <!-- 下面四个是**同级**的独立选项（用户 2026-11-21）：
+                                 各自是一种手术，不再挂在某个选项底下。互斥由 GroupName="Mode" 本身保证
+                                 —— 单选按钮天然只有一个能选中，不需要代码再去取消别人。
+                                 前三个不动分区表（布局条隐藏）；最后一个要重做（布局条照常出现，可以拖容量）。 -->
+                            <RadioButton x:Name="ModeFormatMain" GroupName="Mode"
+                                         Content="{loc:Loc SdReset.Mode.FormatMain}"
+                                         Checked="Options_Changed" />
+                            <TextBlock Text="{loc:Loc SdReset.Mode.FormatMain.Hint}" Style="{StaticResource HintText}"
+                                       Margin="20,4,0,12" TextWrapping="Wrap" />
+                            <RadioButton x:Name="ModeFormatEmu" GroupName="Mode"
+                                         Content="{loc:Loc SdReset.Mode.FormatEmu}"
+                                         Checked="Options_Changed" />
+                            <TextBlock Text="{loc:Loc SdReset.Mode.FormatEmu.Hint}" Style="{StaticResource HintText}"
+                                       Margin="20,4,0,12" TextWrapping="Wrap" />
+                            <RadioButton x:Name="ModeCreateFiles" GroupName="Mode"
+                                         Content="{loc:Loc SdReset.Mode.CreateEmuFiles}"
+                                         Checked="Options_Changed" />
+                            <TextBlock Text="{loc:Loc SdReset.Mode.CreateEmuFiles.Hint}" Style="{StaticResource HintText}"
+                                       Margin="20,4,0,12" TextWrapping="Wrap" />
+                            <RadioButton x:Name="ModeRepartition" GroupName="Mode"
+                                         Content="{loc:Loc SdReset.Mode.Repartition}"
+                                         Checked="Options_Changed" />
+                            <TextBlock Text="{loc:Loc SdReset.Mode.Repartition.Hint}" Style="{StaticResource HintText}"
+                                       Margin="20,4,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
 
@@ -147,8 +172,19 @@
                                     <TextBlock Text="{loc:Loc SdReset.Layout.Main}" Style="{StaticResource BodyText}"
                                                VerticalAlignment="Center" Margin="8,0,0,0" />
                                 </StackPanel>
-                                <TextBlock x:Name="MainSizeText" Grid.Column="1" Style="{StaticResource BodyText}"
-                                           FontWeight="SemiBold" VerticalAlignment="Center" />
+
+                                <!-- 容量可以**直接输入**（用户 2026-11-20 要求）：改一个，另一个跟着变。
+                                     只在回车 / 离开输入框时提交，边打字边换算会把「12」打到一半就当成 1。 -->
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBox x:Name="MainSizeBox"
+                                             Width="92"
+                                             TextAlignment="Right"
+                                             VerticalContentAlignment="Center"
+                                             KeyDown="SizeBox_KeyDown"
+                                             LostFocus="MainSizeBox_LostFocus" />
+                                    <TextBlock Text="{loc:Loc SdReset.Layout.Unit}" Style="{StaticResource BodyText}"
+                                               VerticalAlignment="Center" Margin="6,0,0,0" />
+                                </StackPanel>
                             </Grid>
 
                             <Grid x:Name="LegendPanelEmu" Margin="0,6,0,0" Visibility="Collapsed">
@@ -162,12 +198,46 @@
                                     <TextBlock Text="{loc:Loc SdReset.Layout.Emu}" Style="{StaticResource BodyText}"
                                                VerticalAlignment="Center" Margin="8,0,0,0" />
                                 </StackPanel>
-                                <TextBlock x:Name="EmuSizeText" Grid.Column="1" Style="{StaticResource BodyText}"
-                                           FontWeight="SemiBold" VerticalAlignment="Center" />
+
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBox x:Name="EmuSizeBox"
+                                             Width="92"
+                                             TextAlignment="Right"
+                                             VerticalContentAlignment="Center"
+                                             KeyDown="SizeBox_KeyDown"
+                                             LostFocus="EmuSizeBox_LostFocus" />
+                                    <TextBlock Text="{loc:Loc SdReset.Layout.Unit}" Style="{StaticResource BodyText}"
+                                               VerticalAlignment="Center" Margin="6,0,0,0" />
+                                </StackPanel>
                             </Grid>
 
                             <TextBlock x:Name="DragHint" Text="{loc:Loc SdReset.Layout.DragHint}"
-                                       Style="{StaticResource HintText}" Margin="0,10,0,0" />
+                                       Style="{StaticResource HintText}" Margin="0,10,0,0" TextWrapping="Wrap" />
+
+                            <TextBlock x:Name="RangeHint" Style="{StaticResource HintText}"
+                                       Margin="0,4,0,0" TextWrapping="Wrap" Visibility="Collapsed" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ══ 组件包下载 / 解压进度（用户 2026-11-21 要求）══
+                         只在「准备」阶段出现；两条进度条分别对应下载与解压，
+                         因为它们来源不同、卡住的排查方式也不同（网络 vs 磁盘/校验）。 -->
+                    <Border x:Name="EmuPreparePanel" Style="{StaticResource Card}" Visibility="Collapsed">
+                        <StackPanel>
+                            <TextBlock Text="{loc:Loc SdReset.Prepare.EmuTitle}" Style="{StaticResource BodyText}"
+                                       FontWeight="SemiBold" />
+
+                            <TextBlock x:Name="EmuDownloadLabel" Style="{StaticResource HintText}"
+                                       Margin="0,8,0,0" TextWrapping="Wrap" />
+                            <ProgressBar x:Name="EmuDownloadBar" Height="6" Margin="0,4,0,0"
+                                         Minimum="0" Maximum="100" Value="0"
+                                         Style="{StaticResource FlatProgressBar}" />
+
+                            <TextBlock x:Name="EmuExtractLabel" Style="{StaticResource HintText}"
+                                       Margin="0,8,0,0" TextWrapping="Wrap" />
+                            <ProgressBar x:Name="EmuExtractBar" Height="6" Margin="0,4,0,0"
+                                         Minimum="0" Maximum="100" Value="0"
+                                         Style="{StaticResource FlatProgressBar}" />
                         </StackPanel>
                     </Border>
                 </StackPanel>
@@ -175,13 +245,18 @@
                 <!-- ══ ② 准备与确认 ══ -->
                 <Border x:Name="ConfirmPanel" Style="{StaticResource Card}" Padding="18" Visibility="Collapsed">
                     <StackPanel>
-                        <TextBlock Text="{loc:Loc SdReset.Confirm.Title}" Style="{StaticResource TitleText}" FontSize="17" />
+                        <TextBlock x:Name="ConfirmTitle" Text="{loc:Loc SdReset.Confirm.Title}"
+                                   Style="{StaticResource TitleText}" FontSize="17" TextWrapping="Wrap" />
                         <TextBlock x:Name="ConfirmDevice" Style="{StaticResource BodyText}"
                                    FontWeight="SemiBold" Margin="0,14,0,10" />
                         <TextBlock x:Name="ConfirmLayout" Style="{StaticResource BodyText}"
                                    TextWrapping="Wrap" LineHeight="20" Margin="0,0,0,14" />
-                        <TextBlock Text="{loc:Loc SdReset.Confirm.Warning}"
-                                   Foreground="{DynamicResource DangerBrush}" FontSize="14" FontWeight="SemiBold" />
+                        <!-- 警告与「知晓」文案都按**当前做法**换（用户 2026-11-21）：
+                             三种不动分区表的手术绝不提「清空整张卡」—— 那句话会让用户以为
+                             自己选了会毁掉整卡的操作，于是不敢点下一步。 -->
+                        <TextBlock x:Name="ConfirmWarning" Text="{loc:Loc SdReset.Confirm.Warning}"
+                                   Foreground="{DynamicResource DangerBrush}" FontSize="14" FontWeight="SemiBold"
+                                   TextWrapping="Wrap" />
                         <CheckBox x:Name="Acknowledgement" Content="{loc:Loc SdReset.Confirm.Ack}"
                                   Margin="0,18,0,0"
                                   Checked="Acknowledgement_Changed" Unchecked="Acknowledgement_Changed" />

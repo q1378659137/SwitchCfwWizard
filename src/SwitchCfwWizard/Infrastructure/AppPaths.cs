@@ -23,6 +23,15 @@ public static class AppPaths
     public static string LogRoot { get; } = Path.Combine(BaseDirectory, "logs");
 
     /// <summary>
+    /// 配置模板目录：&lt;运行目录&gt;/templates（2026-11-21 新增）。
+    ///
+    /// 随程序带两份内置模板（联机 / 学习），用户也可以把自己的 <c>*.json</c> 丢进来 ——
+    /// 或者用界面上的「导入模板」按钮，它会复制到这个目录。
+    /// 之所以放**外面**而不是编进程序：用户想改一下某个开关就能直接改文件，不必等我们发版。
+    /// </summary>
+    public static string TemplateRoot { get; } = Path.Combine(BaseDirectory, "templates");
+
+    /// <summary>
     /// boot.dat 的下载目录：&lt;运行目录&gt;/download/boot
     ///
     /// 单独给它一个子目录（而不是直接丢在 download 根下），与各组件的

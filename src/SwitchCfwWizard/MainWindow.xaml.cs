@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using SwitchCfwWizard.Localization;
 using SwitchCfwWizard.SdReset;
+using SwitchCfwWizard.Services;
 using SwitchCfwWizard.ViewModels;
 
 namespace SwitchCfwWizard;
@@ -34,6 +35,80 @@ public partial class MainWindow : Window
             _observedLogs = vm.Logs;
             _observedLogs.CollectionChanged += OnLogsChanged;
         }
+    }
+
+    // ── 配置模板（2026-11-21）─────────────────────────────────────
+
+    /// <summary>
+    /// 选了模板就**立刻应用**（用户要求：「用户选择对应的模板后自动勾选上对应的位置」）。
+    /// 模板只改组件勾选 / 选项 / 四个屏蔽开关，不会动 Token、代理与界面语言。
+    /// </summary>
+    private void Template_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is not ComboBox { SelectedItem: ConfigTemplate template } || DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        ApplyTemplateTo(vm, template);
+    }
+
+    /// <summary>导入一个 json 当模板；导入成功后自动选中并应用它。</summary>
+    private void TemplateImport_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        var loc = LocalizationService.Instance;
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = loc["App.Template.Import"],
+            Filter = loc["App.Template.Filter"],
+            CheckFileExists = true,
+            InitialDirectory = System.IO.Directory.Exists(vm.TemplateFolder) ? vm.TemplateFolder : null,
+        };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var imported = vm.ImportTemplate(dialog.FileName);
+        if (imported is null)
+        {
+            ShowTemplateStatus(loc["App.Template.ImportFailedShort"], isError: true);
+            return;
+        }
+
+        // 列表刚被重建，选中态是空的 —— 这里选中它，SelectionChanged 会顺带应用一次。
+        TemplatePicker.SelectedItem = imported;
+    }
+
+    private void ApplyTemplateTo(MainViewModel vm, ConfigTemplate template)
+    {
+        var loc = LocalizationService.Instance;
+
+        try
+        {
+            var report = vm.ApplyTemplate(template);
+            ShowTemplateStatus(
+                string.Format(loc["App.Template.Applied"], template.Name, report.Components, report.Options, report.Settings),
+                isError: false);
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or System.IO.InvalidDataException
+                                       or System.Text.Json.JsonException or UnauthorizedAccessException)
+        {
+            ShowTemplateStatus(string.Format(loc["App.Template.ImportFailed"], ex.Message), isError: true);
+        }
+    }
+
+    private void ShowTemplateStatus(string text, bool isError)
+    {
+        TemplateStatus.Text = text;
+        TemplateStatus.Foreground = (Brush)FindResource(isError ? "DangerBrush" : "TextSecondaryBrush");
+        TemplateStatus.Visibility = Visibility.Visible;
     }
 
     /// <summary>

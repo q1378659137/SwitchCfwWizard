@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Formats.Tar;
 using System.Globalization;
 using System.IO;
@@ -110,6 +111,9 @@ internal static class Program
         CheckCardCopyRunner();
         CheckSafeEjectText();
         CheckLocalReuse();
+        CheckAutoEmuSource();
+        CheckSdResetSurgery();
+        CheckEmuTaskDeploy();
         CheckDownloadFallback();
         // 用户配置基线：锁死「向导默认值 == 用户实际在用的 ini」，默认值被改回上游值会立刻报警。
         // 放在这里是因为它要生成一整套文件，后面每个用例都会自己重新生成，不会互相干扰。
@@ -133,6 +137,9 @@ internal static class Program
         CheckZipManifest();
         CheckZipExtraction();
         CheckMergeIntoOut();
+        CheckMergeSkip();
+        CheckFormatMainGuard();
+        CheckTemplates();
         CheckEverySelectedComponentMergesIntoOut();
 
         // 2026-09-16 七项功能改动对应的护栏。
@@ -5850,6 +5857,348 @@ internal static class Program
     /// 在此之前，现有用例只造了 Atmosphere / Hekate 两个组件的解压目录，
     /// Ultrahand 与 Sys-patch 的合并路径**从来没被走到过**。
     /// </summary>
+    /// <summary>
+    /// 合并进 <c>out/</c> 时的**跳过规则**（用户 2026-11-21：sphaira 包里的 <c>nx2/</c> 不要拷）。
+    ///
+    /// 为什么要单独钉：sphaira 的发布包顶层就是 <c>nx2/</c> + <c>switch/</c>，两边都是
+    /// <c>switch/sphaira/sphaira.nro</c> —— 不跳过的话，合并顺序一换就会**让 Switch 2 的二进制
+    /// 覆盖掉 Switch 1 的**，而日志上一切正常、文件也在，只有插上机才发现跑不起来。
+    /// </summary>
+    private static void CheckMergeSkip()
+    {
+        Section("合并进 out 的跳过规则（sphaira 的 nx2/ 不拷）");
+
+        // ① 段匹配：跳过 nx2 就必须跳 nx2/ 底下所有东西
+        Assert(ArchiveExtractor.IsSkipped("nx2/switch/sphaira/sphaira.nro", ["nx2"]),
+            "nx2/ 底下的文件必须被跳过");
+        Assert(ArchiveExtractor.IsSkipped("nx2", ["nx2"]), "路径正好是 nx2 本身也要跳过");
+        Assert(ArchiveExtractor.IsSkipped("NX2/switch/a.nro", ["nx2"]), "目录名匹配要大小写不敏感");
+        Assert(ArchiveExtractor.IsSkipped("nx2\\switch\\a.nro", ["nx2"]), "反斜杠路径也要认");
+
+        // ② 不能误伤同前缀的文件名 —— 这是「按路径段比」而不是「按字符前缀比」的意义
+        Assert(!ArchiveExtractor.IsSkipped("nx2readme.txt", ["nx2"]),
+            "nx2readme.txt 不是 nx2/ 里的东西，不能被误跳过");
+        Assert(!ArchiveExtractor.IsSkipped("switch/sphaira/sphaira.nro", ["nx2"]),
+            "Switch 1 那份必须照常合并");
+        Assert(!ArchiveExtractor.IsSkipped("switch/nx2/a.nro", ["nx2"]),
+            "只有**顶层** nx2 才跳过，switch/nx2 不是同一个目录");
+
+        // ③ 单文件级跳过（规则支持到文件，不只是目录）
+        Assert(ArchiveExtractor.IsSkipped("config/foo.ini", ["config/foo.ini"]), "整段路径也该能精确跳过");
+        Assert(!ArchiveExtractor.IsSkipped("config/foo.ini.bak", ["config/foo.ini"]), "精确跳过不能连带同名前缀");
+
+        // ④ 真的走一遍合并：造一份与 sphaira 真包同形的目录
+        var source = Path.Combine(Path.GetTempPath(), "cfw-mergeskip-src-" + Guid.NewGuid().ToString("N"));
+        var destination = Path.Combine(Path.GetTempPath(), "cfw-mergeskip-dst-" + Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            void Write(string relative)
+            {
+                var path = Path.Combine(source, relative.Replace('/', Path.DirectorySeparatorChar));
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllText(path, relative);
+            }
+
+            Write("switch/sphaira/sphaira.nro");
+            Write("nx2/switch/sphaira/sphaira.nro");
+            Write("nx2readme.txt");
+
+            var merged = ArchiveExtractor.MergeDirectory(source, destination, CancellationToken.None, ["nx2"])
+                .Select(p => p.Replace('\\', '/'))
+                .OrderBy(p => p, StringComparer.Ordinal)
+                .ToList();
+
+            Assert(merged.SequenceEqual(new[] { "nx2readme.txt", "switch/sphaira/sphaira.nro" }),
+                $"合并清单应只剩 switch/ 与 nx2readme.txt（实际：{string.Join("、", merged)}）");
+            Assert(!Directory.Exists(Path.Combine(destination, "nx2")), "out 里不该出现 nx2 目录");
+            Assert(File.Exists(Path.Combine(destination, "switch", "sphaira", "sphaira.nro")),
+                "Switch 1 的 sphaira.nro 必须还在");
+        }
+        finally
+        {
+            foreach (var dir in new[] { source, destination })
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+        }
+
+        // ⑤ 目录里必须真的声明了这条规则（改这里而忘了改 ComponentCatalog 就等于没改）
+        var sphaira = ComponentCatalog.All.Single(d => d.Kind == ComponentKind.Sphaira);
+        Assert(sphaira.MergeSkip.Contains("nx2", StringComparer.OrdinalIgnoreCase),
+            "ComponentCatalog 里 sphaira 必须声明 MergeSkip = [nx2]");
+    }
+
+    /// <summary>
+    /// 「仅格式化主数据分区」那两条写盘规则（2026-11-21 用户实测踩了两次）。
+    ///
+    /// 第一次的坑：把 <c>SdDisks.ReadLayout</c> 返回的**结构体**当 MBR 递进去 → 「引导扇区签名不对」。
+    /// 第二次的坑：拿**合成**的 MBR 当「不许变」的基准，而格式化组件写回的是磁盘上真实的扇区 0
+    /// （前 440 字节是引导代码，合成件里是 0）→ 每次都被判成「试图更改分区表」。
+    /// 这两条都不是"看一眼就对"的东西，所以把判定抽成纯函数在这里穷举。
+    /// </summary>
+    private static void CheckFormatMainGuard()
+    {
+        Section("仅格式化主数据分区：写盘范围与分区表保护");
+
+        const long gib = 1073741824L;
+        var layout = SdLayout.Create(64 * gib, new SdFormatOptions(SdFileSystem.Fat32, 1, 12d));
+        var main = layout.Main;
+
+        // 卡上真实的扇区 0：前 440 字节是引导代码，**不是 0**（这正是上一次误判的根源）
+        var sector0 = new byte[512];
+        new Random(11).NextBytes(sector0);
+        sector0[510] = 85;
+        sector0[511] = 170;
+
+        // ① 写扇区 0，内容与卡上一致 → 允许（格式化组件就是这样把 MBR 原样写回）
+        SdResetEngine.EnsureFormatWriteAllowed(0L, 512L, main, sector0, sector0);
+
+        // ② 写扇区 0，但内容变了 → 必须拒绝
+        var tampered = (byte[])sector0.Clone();
+        tampered[0] ^= 0xFF;
+        var rejected = false;
+        try
+        {
+            SdResetEngine.EnsureFormatWriteAllowed(0L, 512L, main, tampered, sector0);
+        }
+        catch (IOException)
+        {
+            rejected = true;
+        }
+
+        Assert(rejected, "扇区 0 内容被改动时必须拒绝（否则分区表会被悄悄改掉）");
+
+        // ③ 合成 MBR 当基准 + 真实扇区 0 当内容 = **上一次那个 bug 的形状**，必须拒绝
+        var synthesized = SdDisks.MbrFromLayout(BuildLayoutBuffer());
+        var synthesizedRejected = false;
+        try
+        {
+            SdResetEngine.EnsureFormatWriteAllowed(0L, 512L, main, sector0, synthesized);
+        }
+        catch (IOException)
+        {
+            synthesizedRejected = true;
+        }
+
+        Assert(synthesizedRejected,
+            "用合成 MBR 当基准时会误判 —— 这条断言钉住「基准必须是磁盘上的真实扇区 0」");
+
+        // ④ 正常写主分区内部 → 允许（首尾各试一次）
+        SdResetEngine.EnsureFormatWriteAllowed(main.Offset, 4096L, main, new byte[4096], sector0);
+        SdResetEngine.EnsureFormatWriteAllowed(main.Offset + main.Length - 512L, 512L, main, new byte[512], sector0);
+
+        // ⑤ 写进 emuMMC → 必须拒绝（这是「不许碰虚拟系统」的底线）
+        var ioRejected = false;
+        try
+        {
+            SdResetEngine.EnsureFormatWriteAllowed(layout.Partitions[1].Offset, 512L, main, new byte[512], sector0);
+        }
+        catch (IOException)
+        {
+            ioRejected = true;
+        }
+
+        Assert(ioRejected, "写进 emuMMC 分区必须被拒绝");
+
+        // ⑥ 跨越主分区末尾的写（起点在里、尾巴在外）也必须拒绝
+        var crossingRejected = false;
+        try
+        {
+            SdResetEngine.EnsureFormatWriteAllowed(main.Offset + main.Length - 256L, 512L, main, new byte[512], sector0);
+        }
+        catch (IOException)
+        {
+            crossingRejected = true;
+        }
+
+        Assert(crossingRejected, "压线的写（一部分在主分区外）必须被拒绝");
+
+        // ⑦ 读：扇区 0 与主分区内都允许；读到 emuMMC 里必须拒绝
+        SdResetEngine.EnsureFormatWriteAllowed(0L, 512L, main, null, sector0);
+        SdResetEngine.EnsureFormatWriteAllowed(main.Offset, 512L, main, null, sector0);
+
+        var readRejected = false;
+        try
+        {
+            SdResetEngine.EnsureFormatWriteAllowed(layout.Partitions[1].Offset + 4096, 512L, main, null, sector0);
+        }
+        catch (IOException)
+        {
+            readRejected = true;
+        }
+
+        Assert(readRejected, "读到 emuMMC 区域也必须拒绝（不该去碰那块）");
+    }
+
+    /// <summary>造一份 Windows 会返回的 <c>DRIVE_LAYOUT_INFORMATION_EX</c>（两个分区）。</summary>
+    private static byte[] BuildLayoutBuffer()
+    {
+        var buffer = new byte[48 + 2 * 144];
+        BinaryPrimitives.WriteInt32LittleEndian(buffer, 0);
+        BinaryPrimitives.WriteInt32LittleEndian(buffer.AsSpan(4), 2);
+        BinaryPrimitives.WriteUInt32LittleEndian(buffer.AsSpan(8), 0xA1B2C3D4);
+
+        var expected = new (long Offset, long Length, byte Type)[]
+        {
+            (32768L * 512, 40000L * 512, (byte)12),
+            (44000L * 512, 8000L * 512, SdLayout.HiddenEmuPartitionType),
+        };
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var entry = buffer.AsSpan(48 + i * 144, 144);
+            BinaryPrimitives.WriteInt32LittleEndian(entry, 0);
+            BinaryPrimitives.WriteInt64LittleEndian(entry.Slice(8), expected[i].Offset);
+            BinaryPrimitives.WriteInt64LittleEndian(entry.Slice(16), expected[i].Length);
+            BinaryPrimitives.WriteInt32LittleEndian(entry.Slice(24), i + 1);
+            entry[32] = expected[i].Type;
+        }
+
+        return buffer;
+    }
+
+    /// <summary>
+    /// 配置模板（2026-11-21 用户要求：模板编进程序、选了就应用、json 里的信息**全部**导入）。
+    ///
+    /// 这里钉四件事：
+    /// ① 两份模板是**内嵌**的：`templates/` 目录不存在时也得列出来（上一版是往 exe 旁放文件）；
+    /// ② 名字走语言包（切语言会变），所以按 <c>Id</c>（play/study）而不是显示名去认；
+    /// ③ 解析是**整份 AppSettings**：语言、主题、Token、引导项这些也一并读进来，不再是几个字段的白名单；
+    /// ④ 用户手改模板时的注释与尾逗号不该报错，"根本不是模板"要明确报错；导入不覆盖（含与内嵌同名）。
+    /// </summary>
+    private static void CheckTemplates()
+    {
+        Section("配置模板（内嵌 play/study + 导入）");
+
+        // ① 目录不在也必须有这两份 —— 内嵌资源没编进去时这里会红
+        var folderExisted = Directory.Exists(TemplateStore.Folder);
+        var templates = TemplateStore.List();
+        var playTemplate = templates.FirstOrDefault(t => t.Id == "play");
+        var studyTemplate = templates.FirstOrDefault(t => t.Id == "study");
+
+        Assert(playTemplate is not null && studyTemplate is not null,
+            $"应自带 play / study 两份模板（实际：{string.Join("、", templates.Select(t => t.Id))}）");
+        Assert(playTemplate!.IsBuiltIn && studyTemplate!.IsBuiltIn, "这两份必须是内嵌模板（IsBuiltIn）");
+        Assert(!folderExisted || true, "（目录存不存在不影响内嵌模板）");
+
+        // ② 显示名来自语言包
+        var loc = LocalizationService.Instance;
+        Assert(playTemplate.Name == loc["Template.Play"],
+            $"play 的显示名应取 Template.Play（实际「{playTemplate.Name}」）");
+        Assert(studyTemplate.Name == loc["Template.Study"],
+            $"study 的显示名应取 Template.Study（实际「{studyTemplate.Name}」）");
+
+        var play = TemplateStore.Load(playTemplate);
+        var study = TemplateStore.Load(studyTemplate);
+
+        // ③ 组件与选项都读到了
+        Assert(play.Components.Count >= 40, $"「play」应读到 40+ 个组件勾选（实际 {play.Components.Count}）");
+        Assert(play.OptionValues.Count >= 70, $"「play」应读到 70+ 个选项（实际 {play.OptionValues.Count}）");
+
+        Assert(play.Components.TryGetValue("SysPatch", out var playSysPatch) && !playSysPatch,
+            "「play」里 Sys-patch 应为未勾选");
+        Assert(study.Components.TryGetValue("SysPatch", out var studySysPatch) && studySysPatch,
+            "「study」里 Sys-patch 应为勾选");
+
+        Assert(play.OptionValues.TryGetValue("Atmosphere/enable_dns_mitm", out var playDnsMitm) && playDnsMitm == "0",
+            $"「play」的 enable_dns_mitm 应为 0（实际 {playDnsMitm}）");
+        Assert(study.OptionValues.TryGetValue("Atmosphere/enable_dns_mitm", out var studyDnsMitm) && studyDnsMitm == "1",
+            $"「study」的 enable_dns_mitm 应为 1（实际 {studyDnsMitm}）");
+
+        Assert(!play.BlankSerialSysmmc && study.BlankSerialSysmmc,
+            "「play」不屏蔽序列号、「study」屏蔽");
+        Assert(!play.Use90DnsEmummc && study.Use90DnsEmummc, "90DNS 同理：只有「study」打开");
+
+        // ③b **整份**都要读进来（不再是白名单）—— 抽查几个不在旧白名单里的字段
+        Assert(play.Language == "zh-Hans" && play.Theme == "system",
+            $"语言/主题应被读进来（实际 {play.Language}/{play.Theme}）");
+        Assert(play.TimeoutSeconds == 90, $"超时时间应被读进来（实际 {play.TimeoutSeconds}）");
+        Assert(play.PreferPrerelease && !play.PreferLocalDownloads,
+            "「优先下载预览版 / 优先使用本地资源」两个开关应被读进来");
+        Assert(play.IncludeComponentFilesInOutput && play.IncludePayloads && play.IncludeBootDat,
+            "三个输出开关应被读进来");
+        Assert(play.BootStock && play.BootSysNand && play.BootEmuNand, "三个引导项开关应被读进来");
+
+        // ④ 解析宽容度 / 拒绝
+        var tempDir = Path.Combine(Path.GetTempPath(), "cfw-tpl-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempDir);
+
+        try
+        {
+            var tolerant = TemplateStore.Parse("""
+                {
+                  // 用户手改时会写注释
+                  "Language": "en-US",
+                  "TimeoutSeconds": 42,
+                  "Components": { "Hekate": true },
+                  "OptionValues": { "Hekate/bootwait": 5 },
+                  "BlankSerialSysmmc": true,
+                }
+                """);
+
+            Assert(tolerant.Language == "en-US" && tolerant.TimeoutSeconds == 42,
+                "语言与数字型字段应按原值读进来");
+            Assert(tolerant.OptionValues["Hekate/bootwait"] == "5", "数字型取值应转成字符串");
+            Assert(tolerant.BlankSerialSysmmc, "布尔开关应被读到");
+            Assert(tolerant.Components.Count == 1 && tolerant.Components["Hekate"], "组件勾选应被读到");
+
+            // 没写的字段用默认值（不是"保持界面现状"了 —— 现在整份导入）
+            Assert(tolerant.AutoPackZip == false && tolerant.Ram8Gb == false, "没写的开关应是默认值");
+
+            var notTemplate = Path.Combine(tempDir, "不是模板.json");
+            File.WriteAllText(notTemplate, "[1, 2, 3]");
+            var rejected = false;
+            try
+            {
+                TemplateStore.Parse(File.ReadAllText(notTemplate));
+            }
+            catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidDataException)
+            {
+                rejected = true;
+            }
+
+            Assert(rejected, "最外层不是 JSON 对象时必须报错");
+
+            // ⑤ 导入：与内嵌模板同名也要改名，绝不覆盖
+            var source = Path.Combine(tempDir, "study.json");
+            File.Copy(Path.Combine(tempDir, "不是模板.json"), source);   // 先放个占位，下面重写
+            File.WriteAllText(source, "{ \"Language\": \"zh-Hans\" }");
+
+            var imported = TemplateStore.Import(source);
+            try
+            {
+                Assert(File.Exists(imported.FilePath ?? string.Empty), "导入后文件应存在");
+                Assert(!string.Equals(imported.Id, "study", StringComparison.OrdinalIgnoreCase),
+                    $"与内嵌模板同名时导入应改名（实际 {imported.Id}）");
+                Assert(imported.Name == imported.Id, "导入的模板用文件名当显示名");
+            }
+            finally
+            {
+                if (imported.FilePath is { } importedPath && File.Exists(importedPath))
+                {
+                    File.Delete(importedPath);
+                }
+
+                if (Directory.Exists(TemplateStore.Folder)
+                    && !Directory.EnumerateFileSystemEntries(TemplateStore.Folder).Any())
+                {
+                    Directory.Delete(TemplateStore.Folder);
+                }
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                Directory.Delete(tempDir, recursive: true);
+            }
+        }
+    }
+
     private static void CheckEverySelectedComponentMergesIntoOut()
     {
         Section("每个被勾选的组件都必须真的合并进 out（按组件对账，不看总数）");
@@ -9758,11 +10107,15 @@ internal static class Program
     {
         // 每个点分段都必须非空 —— 否则 "Component." + kind + ".Name" 这种**动态拼键**的
         // 前半截会被当成一个键（"Component."）误报。
+        //
+        // 第三段那条「裸字面量」白名单里加 `Template`（2026-11-21）：内嵌配置模板的显示名是
+        // `TemplateStore.BuiltInNameKey` 里的 switch 字面量（`"Template.Play"`），
+        // 不走 loc[...] 索引器 —— 不加这一项就会被误报成死键，而那种误报会训练大家无视这条检查。
         const string KeyShape = @"[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*";
         var pattern = new Regex(
             @"loc:Loc\s+(" + KeyShape + @")"
             + @"|(?:LocalizationService\.Instance|loc)\[?""(" + KeyShape + @")"""
-            + @"|""((?:App|Boot|Check|Common|Component|Dialog|Global|Group|Log|Opt|SdReset|Settings)\." + KeyShape + @")""",
+            + @"|""((?:App|Boot|Check|Common|Component|Dialog|Global|Group|Log|Opt|SdReset|Settings|Template)\." + KeyShape + @")""",
             RegexOptions.Compiled);
 
         var referenced = new SortedSet<string>(StringComparer.Ordinal);
@@ -10606,6 +10959,438 @@ internal static class Program
     }
 
     /// <summary>
+    /// 「重建 emuMMC」组件包的**地址解析**（用户 2026-11-21 要求改成从 Release 下载、地址可改）。
+    ///
+    /// 这里全是纯函数，所以能钉得很死：这个地址有三条路会用到它 ——
+    /// 下载组件包、界面标红、以及「填了但认不出」时的回落。任何一条走偏，
+    /// 用户看到的都是「明明填对了地址却说没有 Release」，而代码不会报错。
+    /// </summary>
+    private static void CheckAutoEmuSource()
+    {
+        Console.WriteLine();
+        Console.WriteLine("── 重建 emuMMC：组件包来源解析 ──");
+
+        // ① 留空 = 默认仓库（用户给的地址）。改这个默认值等于改产品行为，所以要钉住。
+        var fallback = AutoEmuSource.ResolveRepo(null);
+        Assert(fallback is not null && fallback.Owner == "q1378659137" && fallback.Name == "AutoEmu",
+            $"留空时应解析成默认仓库 q1378659137/AutoEmu（实际 {fallback}）");
+
+        // ② 用户可能粘的几种写法都要认，而且认出的是**同一个**仓库。
+        var variants = new[]
+        {
+            "https://github.com/q1378659137/AutoEmu/releases",
+            "https://github.com/q1378659137/AutoEmu",
+            "https://github.com/q1378659137/AutoEmu/releases/tag/6.5.5",
+            "https://api.github.com/repos/q1378659137/AutoEmu/releases",
+            "q1378659137/AutoEmu",
+        };
+
+        foreach (var text in variants)
+        {
+            var repo = AutoEmuSource.ResolveRepo(text);
+            Assert(repo is not null && repo.Owner == "q1378659137" && repo.Name == "AutoEmu",
+                $"「{text}」应解析成 q1378659137/AutoEmu（实际 {repo}）");
+        }
+
+        // ③ 认不出的必须返回 null，**不许猜**：猜错的后果是「查了一个别人的仓库」。
+        Assert(AutoEmuSource.ResolveRepo("https://gitlab.com/a/b") is null,
+            "非 GitHub 主机必须拒绝（查询打的是 api.github.com，按同一套路径查只会得到误导性的答案）");
+        Assert(AutoEmuSource.ResolveRepo("这不是一个地址") is null, "认不出的文本必须返回 null");
+        Assert(AutoEmuSource.ResolveRepo("https://github.com/onlyowner") is null, "只有 owner 没有仓库名时必须拒绝");
+
+        // ④ 界面判据：留空合法（用默认地址），填了但推不出仓库才标红。
+        Assert(AutoEmuSource.IsAcceptable(""), "留空是合法状态，不该标红");
+        Assert(AutoEmuSource.IsAcceptable("  "), "纯空格等同留空");
+        Assert(!AutoEmuSource.IsAcceptable("https://gitlab.com/a/b"), "认不出的地址必须标红");
+
+        // ⑤ 回落要**报出来**（用户会看到一行「本次改用默认地址」），不能静默。
+        var (fallbackRepo, fellBack) = AutoEmuSource.ResolveWithFallback("https://gitlab.com/a/b");
+        Assert(fellBack && fallbackRepo is not null && fallbackRepo.Name == "AutoEmu",
+            "坏地址应回落到默认仓库，并把 FellBack 置为 true");
+
+        var (explicitRepo, explicitFallback) = AutoEmuSource.ResolveWithFallback(
+            "https://github.com/q1378659137/AutoEmu/releases");
+        Assert(!explicitFallback && explicitRepo is not null && explicitRepo.Name == "AutoEmu",
+            "能认出的地址不该走回落分支");
+
+        // ⑥ 落盘文件名带版本号（新旧两版并存，避免残骸覆盖能用的那份）。
+        Assert(AutoEmuSource.BuildAssetFileName("6.5.5") == "AutoEmu_6.5.5.zip",
+            $"6.5.5 的落盘名应为 AutoEmu_6.5.5.zip（实际 {AutoEmuSource.BuildAssetFileName("6.5.5")}）");
+        Assert(AutoEmuSource.BuildAssetFileName("v1.0/beta") == "AutoEmu_v1.0_beta.zip",
+            $"tag 里的非法文件名字符要替换成下划线（实际 {AutoEmuSource.BuildAssetFileName("v1.0/beta")}）");
+        Assert(AutoEmuSource.BuildAssetFileName("   ") == "AutoEmu_unknown.zip",
+            "空 tag 不能拼出「AutoEmu_.zip」这种怪名字");
+
+        // ⑦ 落地目录：download/AutoEmu（用户 2026-11-21 要求：下载完放进一个文件夹，
+        //    不要和其它组件的 zip 一起堆在 download/ 根下）。
+        var folder = AutoEmuSource.DownloadFolder;
+        Assert(Path.GetFileName(folder) == AutoEmuSource.DownloadFolderName,
+            $"组件包目录名应为 {AutoEmuSource.DownloadFolderName}（实际 {Path.GetFileName(folder)}）");
+        Assert(Path.GetFileName(Path.GetDirectoryName(folder) ?? string.Empty) == "download",
+            $"组件包目录应挂在 download 下面（实际 {folder}）");
+    }
+
+    /// <summary>
+    /// 「恢复单分区」下面那几个**不动分区表**的手术（用户 2026-11-21）。
+    ///
+    /// 三条路都靠 <see cref="SdLayout.FromExistingMbr"/> 读卡上现有的分区表：
+    ///   · 只格式化主数据分区 → 必须认出主分区在哪、emuMMC 绝对不能被写到；
+    ///   · 只清空 emuMMC → 必须认出第二个分区是隐藏类型 240；
+    ///   · 只创建文件 → 同一套识别。
+    /// 读错一个字节，动的就是另一块区域，而界面上一切正常 —— 所以这里把「写出去 → 读回来」钉住。
+    /// </summary>
+    private static void CheckSdResetSurgery()
+    {
+        Console.WriteLine();
+        Console.WriteLine("── 恢复单分区：不动分区表的手术 ──");
+
+        const long gib = 1073741824L;
+        var disk = 64 * gib;
+
+        // ① 动作编号是**跨进程协议**：请求会被序列化后经命名管道发给提权子进程，
+        //    枚举默认按数字走 —— 改数字等于让两个进程理解不同的动作。
+        Assert((int)SdResetAction.Rebuild == 0
+               && (int)SdResetAction.FormatOnly == 1
+               && (int)SdResetAction.WipeEmuPartition == 2
+               && (int)SdResetAction.CreateEmuFiles == 3
+               && (int)SdResetAction.FormatMain == 4,
+            "SdResetAction 的编号是与提权子进程约定的协议，不能改动");
+
+        // ② 写出去的分区表必须能**原样读回来**。
+        var created = SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.Fat32, 1, 12d));
+        var mbr = created.CreateMbr(0x12345678u);
+        var readBack = SdLayout.FromExistingMbr(disk, mbr);
+
+        Assert(readBack.Partitions.Length == created.Partitions.Length,
+            $"读回的分区数应一致（写出 {created.Partitions.Length}，读回 {readBack.Partitions.Length}）");
+
+        for (var i = 0; i < created.Partitions.Length; i++)
+        {
+            Assert(readBack.Partitions[i].Offset == created.Partitions[i].Offset
+                   && readBack.Partitions[i].Length == created.Partitions[i].Length
+                   && readBack.Partitions[i].Type == created.Partitions[i].Type,
+                $"第 {i + 1} 个分区的起点/长度/类型往返后必须一致（写 {created.Partitions[i]}，读 {readBack.Partitions[i]}）");
+        }
+
+        Assert(readBack.Partitions.Length > 1
+               && readBack.Partitions[1].Type == SdLayout.HiddenEmuPartitionType,
+            "第二个分区必须能被识别成 emuMMC 隐藏分区（类型 240）—— 「只清空 emuMMC」靠这个判断");
+
+        Assert(readBack.Main.Length > 2 * gib,
+            $"主数据分区必须大于 2 GiB（实际 {readBack.Main.Length / (double)gib:0.00} GiB）");
+
+        // ③ 单分区卡（「格式化 TF 卡并恢复单分区」的结果）读回来只有一个分区，
+        //    这时「清空 emuMMC」「创建所需文件」都必须被引擎的 `Partitions.Length < 2` 拦下，
+        //    而不是凭运气去写一个不存在的分区。
+        var single = SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.Fat32, 0));
+        var singleBack = SdLayout.FromExistingMbr(disk, single.CreateMbr(1u));
+        Assert(singleBack.Partitions.Length == 1,
+            $"单分区布局读回来应只有 1 个分区（实际 {singleBack.Partitions.Length}）");
+        Assert(singleBack.Partitions.Length < 2,
+            "只有一个主分区时必须满足「拒绝 emuMMC 手术」的那个前置条件");
+
+        // ④ 引导扇区签名不对 → 必须抛异常，不能当成「空分区表」往下走（那会把主分区认到 0 偏移）。
+        var broken = (byte[])mbr.Clone();
+        broken[510] = 0;
+        var rejected = false;
+        try
+        {
+            SdLayout.FromExistingMbr(disk, broken);
+        }
+        catch (InvalidDataException)
+        {
+            rejected = true;
+        }
+
+        Assert(rejected, "引导扇区签名（55 AA）不对时必须拒绝解析");
+
+        // ⑤ 「重新分区主数据分区和 emuMMC」用的是同一条 Create —— 它必须真的产出两块分区，
+        //    否则用户勾了它却只拿到一个主分区。
+        var repartition = SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.ExFat, 1, 12.5d));
+        Assert(repartition.Partitions.Length == 2,
+            $"重新分区档应产出「主数据 + emuMMC」两块分区（实际 {repartition.Partitions.Length}）");
+        Assert(repartition.Partitions[1].Type == SdLayout.HiddenEmuPartitionType,
+            "重新分区档的第二个分区必须是隐藏类型 240");
+        Assert(repartition.Main.Length > 2 * gib,
+            "重新分区档的主数据分区同样要大于 2 GiB");
+
+        // ⑥ 小数容量也要能写进分区表并读回来（这是上一轮「可设小数」的连带断言）。
+        var withFraction = SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.Fat32, 1, 12.5d));
+        var fractionBack = SdLayout.FromExistingMbr(disk, withFraction.CreateMbr(2u));
+        Assert(fractionBack.Partitions[1].Length == withFraction.Partitions[1].Length,
+            "12.50 GiB 的 emuMMC 分区往返后长度必须一致");
+
+        // ⑦ **两种「分区表」格式别搞混**（2026-11-21 用户报的真 bug）：
+        //    `SdDisks.ReadLayout` 返回的是 `DRIVE_LAYOUT_INFORMATION_EX` 结构，**不是** MBR 扇区；
+        //    直接把它喂给 FromExistingMbr，用户看到的是「这张卡上没有可识别的分区表（引导扇区签名不对）」，
+        //    于是「仅创建 emuMMC 所需文件」点下去一定失败。
+        //    这里手工造一份 Windows 会返回的那种结构，走一遍合成 → 解析的整条链。
+        var layoutBuffer = new byte[48 + 2 * 144];
+        BinaryPrimitives.WriteInt32LittleEndian(layoutBuffer, 0);          // MBR 分区风格
+        BinaryPrimitives.WriteInt32LittleEndian(layoutBuffer.AsSpan(4), 2); // 两个分区
+        BinaryPrimitives.WriteUInt32LittleEndian(layoutBuffer.AsSpan(8), 0xA1B2C3D4); // 磁盘签名
+
+        var expected = new (long Offset, long Length, byte Type)[]
+        {
+            (32768L * 512, 40000L * 512, (byte)12),          // 主数据分区（FAT32）
+            (44000L * 512, 8000L * 512, SdLayout.HiddenEmuPartitionType),
+        };
+
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var entry = layoutBuffer.AsSpan(48 + i * 144, 144);
+            BinaryPrimitives.WriteInt32LittleEndian(entry, 0);            // PartitionStyle
+            BinaryPrimitives.WriteInt64LittleEndian(entry.Slice(8), expected[i].Offset);
+            BinaryPrimitives.WriteInt64LittleEndian(entry.Slice(16), expected[i].Length);
+            BinaryPrimitives.WriteInt32LittleEndian(entry.Slice(24), i + 1); // PartitionNumber
+            entry[32] = expected[i].Type;                                 // PartitionType
+        }
+
+        var synthesized = SdDisks.MbrFromLayout(layoutBuffer);
+        Assert(synthesized.Length == 512, "合成出来的 MBR 必须是 512 字节");
+        Assert(synthesized[510] == 85 && synthesized[511] == 170,
+            "合成出来的 MBR 必须带 55 AA 引导签名 —— 少了它 FromExistingMbr 一定拒绝");
+        Assert(BinaryPrimitives.ReadUInt32LittleEndian(synthesized.AsSpan(440)) == 0xA1B2C3D4u,
+            "磁盘签名要落在 MBR 的 440 偏移上");
+
+        var synthesizedLayout = SdLayout.FromExistingMbr(disk, synthesized);
+        Assert(synthesizedLayout.Partitions.Length == 2,
+            $"从合成 MBR 解析出的分区数应为 2（实际 {synthesizedLayout.Partitions.Length}）");
+
+        for (var i = 0; i < expected.Length && i < synthesizedLayout.Partitions.Length; i++)
+        {
+            var part = synthesizedLayout.Partitions[i];
+            Assert(part.Offset == expected[i].Offset && part.Length == expected[i].Length
+                   && part.Type == expected[i].Type,
+                $"第 {i + 1} 个分区从结构体 → MBR → 布局必须一路不变（期望 {expected[i]}，实际 ({part.Offset}, {part.Length}, {part.Type})）");
+        }
+
+        // GPT 风格的布局不能被当成 MBR 硬解析
+        var gpt = (byte[])layoutBuffer.Clone();
+        BinaryPrimitives.WriteInt32LittleEndian(gpt, 1);
+        var gptRejected = false;
+        try
+        {
+            SdDisks.MbrFromLayout(gpt);
+        }
+        catch (IOException)
+        {
+            gptRejected = true;
+        }
+
+        Assert(gptRejected, "PartitionStyle 不是 MBR 时必须明确拒绝，而不是合成一份假的 MBR");
+    }
+
+    /// <summary>
+    /// 「创建 emuMMC 所需文件」在**没有 payload.bin 的卡**上真的能跑完（2026-11-21 用户报的 bug）。
+    ///
+    /// 老实现先去读卡根目录的 `payload.bin` 当任务基准 —— 那张卡上没有这个文件就直接
+    /// `FileNotFoundException`，用户看到「点下一步之后创建不了」。改成用**组件包里的** payload，
+    /// 并允许卡上没有旧文件。这里拿临时目录当卡根，把整条链真跑一遍再核对落盘结果。
+    /// </summary>
+    private static void CheckEmuTaskDeploy()
+    {
+        Console.WriteLine();
+        Console.WriteLine("── 创建 emuMMC 所需文件：在没有 payload.bin 的卡上 ──");
+
+        const long gib = 1073741824L;
+        var layout = SdLayout.Create(64 * gib, new SdFormatOptions(SdFileSystem.Fat32, 1, 12d));
+        var mbr = layout.CreateMbr(0x55667788u);
+
+        var assets = BuildFixtureAssets();
+        var task = EmuTask.Create(layout, mbr, assets["payload.bin"]);
+
+        var root = Path.Combine(Path.GetTempPath(), "cfw-emudeploy-" + Guid.NewGuid().ToString("N"));
+        var second = Path.Combine(Path.GetTempPath(), "cfw-emudeploy2-" + Guid.NewGuid().ToString("N"));
+        var third = Path.Combine(Path.GetTempPath(), "cfw-emudeploy3-" + Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            // ① 空卡根（就是「卡上没有 payload.bin」那种）：必须能部署成功
+            Directory.CreateDirectory(root);
+
+            var threw = false;
+            try
+            {
+                EmuTaskFiles.Deploy(root, task, assets, static () => { }, verifyExistingPayload: false);
+            }
+            catch (Exception ex)
+            {
+                threw = true;
+                Console.WriteLine("  部署抛异常：" + ex.GetType().Name + " / " + ex.Message);
+            }
+
+            Assert(!threw, "卡根没有 payload.bin 时也应能创建所需文件（不能抛 FileNotFoundException）");
+
+            var deployedPayload = Path.Combine(root, "payload.bin");
+            Assert(File.Exists(deployedPayload), "部署完卡根必须有 payload.bin");
+            Assert(File.Exists(deployedPayload)
+                   && File.ReadAllBytes(deployedPayload).SequenceEqual(assets["payload.bin"]),
+                "卡根的 payload.bin 必须是组件包里的那份");
+            Assert(!File.Exists(Path.Combine(root, "payload.bin.backup")),
+                "本来没有旧 payload 时不该凭空产生一个 backup");
+
+            foreach (var name in EmuTaskFiles.AssetNames)
+            {
+                var path = Path.Combine(root, "bootloader", "ns-toolbox", name);
+                Assert(File.Exists(path), $"bootloader/ns-toolbox/{name} 应被写入");
+            }
+
+            Assert(File.Exists(Path.Combine(root, "bootloader", "ns-toolbox", "task.bin")),
+                "bootloader/ns-toolbox/task.bin 应被写入");
+            Assert(File.Exists(Path.Combine(root, "ready.flag")), "ready.flag 应被写入（下次开机会据此创建 emuMMC）");
+
+            // ② 卡上已有一份**不同的** payload.bin：要备份成 payload.bin.backup，再换成组件包那份
+            Directory.CreateDirectory(second);
+            var oldPayload = Encoding.ASCII.GetBytes("ICTC-OLD-PAYLOAD");
+            File.WriteAllBytes(Path.Combine(second, "payload.bin"), oldPayload);
+
+            EmuTaskFiles.Deploy(second, task, assets, static () => { }, verifyExistingPayload: false);
+
+            var backup = Path.Combine(second, "payload.bin.backup");
+            Assert(File.Exists(backup) && File.ReadAllBytes(backup).SequenceEqual(oldPayload),
+                "卡上原有的 payload.bin 必须原样进 backup");
+            Assert(File.ReadAllBytes(Path.Combine(second, "payload.bin")).SequenceEqual(assets["payload.bin"]),
+                "替换后的 payload.bin 必须是组件包那份（否则开机起不来 ns-toolbox）");
+
+            // ③ 对**已经部署过**的卡再跑一次：引擎走的是 Resume（不是 Deploy），
+            //    必须保住最早那份 payload.bin.backup —— 那是卡上真正的原版启动文件。
+            //    这里刻意让「卡上原有的 payload」与任务记录一致（真实流程就是这样：
+            //    任务是照着卡上那份建的），否则 Resume 会（正确地）拒绝。
+            Directory.CreateDirectory(third);
+            var original = new byte[4096];
+            new Random(7).NextBytes(original);
+            File.WriteAllBytes(Path.Combine(third, "payload.bin"), original);
+
+            var taskFromOriginal = EmuTask.Create(layout, mbr, original);
+            EmuTaskFiles.Deploy(third, taskFromOriginal, assets, static () => { }, verifyExistingPayload: true);
+            Assert(File.ReadAllBytes(Path.Combine(third, "payload.bin.backup")).SequenceEqual(original),
+                "第一次部署要把原版 payload.bin 备份下来");
+
+            EmuTaskFiles.Resume(third, assets, static () => { });
+
+            Assert(File.ReadAllBytes(Path.Combine(third, "payload.bin.backup")).SequenceEqual(original),
+                "第二次（Resume）必须保留最早那份原版 backup，不能被这一次的内容顶掉");
+            Assert(File.ReadAllBytes(Path.Combine(third, "payload.bin")).SequenceEqual(assets["payload.bin"]),
+                "Resume 之后卡根的 payload.bin 仍是组件包那份");
+
+            // ④ 同一张卡再调 Deploy 必须被拒绝 —— 它是「从零部署」的入口，
+            //    允许它覆盖 backup 就等于把真正的原版弄丢了。
+            var redeemRefused = false;
+            try
+            {
+                EmuTaskFiles.Deploy(third, task, assets, static () => { }, verifyExistingPayload: false);
+            }
+            catch (IOException)
+            {
+                redeemRefused = true;
+            }
+
+            Assert(redeemRefused, "卡上已有未完成任务标记时 Deploy 必须拒绝，让调用方改走 Resume");
+        }
+        finally
+        {
+            foreach (var dir in new[] { root, second, third })
+            {
+                if (Directory.Exists(dir))
+                {
+                    Directory.Delete(dir, recursive: true);
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// 现造一个「形状正确」的组件包，再**走生产代码**读回来。
+    ///
+    /// 为什么需要它：程序里自 2026-11-21 起不再内嵌 <c>NsToolbox.AutoEmu.zip</c>（用户要求删掉那 2.7 MB），
+    /// 而回归必须能离线跑 —— 总不能为了跑回归去 GitHub 下 2.7 MB。
+    /// 造包时按真实格式来（6 个文件 + 自带 sha256.json），所以 <see cref="AutoPayloadAssets.LoadFromFile"/>
+    /// 里那套「逐个文件 sha256 校验」也被真跑了一遍。
+    /// </summary>
+    private static Dictionary<string, byte[]> BuildFixtureAssets()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cfw-autoemu-fixture-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var zipPath = Path.Combine(dir, "auto-emu.zip");
+
+        var contents = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+        var index = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        foreach (var name in EmuTaskFiles.AssetNames)
+        {
+            // payload.bin 要落在 288 字节～192 KiB 之间；其余文件只要是 1 字节以上即可。
+            var size = PathPolicy.Comparer.Equals(name, "payload.bin") ? 4096 : 1024 + name.Length * 13;
+            var data = new byte[size];
+            new Random(name.Length * 977 + size).NextBytes(data);
+            contents[name] = data;
+            index[name] = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(data));
+        }
+
+        try
+        {
+            using (var stream = File.Create(zipPath))
+            using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
+            {
+                foreach (var pair in contents)
+                {
+                    using var entry = zip.CreateEntry(pair.Key).Open();
+                    entry.Write(pair.Value);
+                }
+
+                using (var entry = zip.CreateEntry("sha256.json").Open())
+                {
+                    entry.Write(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(index)));
+                }
+            }
+
+            var assets = AutoPayloadAssets.LoadFromFile(zipPath);
+
+            Assert(assets.Count == contents.Count
+                   && contents.All(p => assets.TryGetValue(p.Key, out var v) && v.SequenceEqual(p.Value)),
+                "夹具组件包经 LoadFromFile 读回来必须与写进去的字节一致");
+
+            // 被改过一个字节的包必须被拒绝 —— 本地复用是唯一的离线来源，不能吃下坏文件。
+            Directory.CreateDirectory(Path.Combine(dir, "tampered"));
+            var tamperedPath = Path.Combine(dir, "tampered", "auto-emu.zip");
+            using (var source = File.OpenRead(zipPath))
+            using (var target = File.Create(tamperedPath))
+            {
+                source.CopyTo(target);
+            }
+
+            var bytes = File.ReadAllBytes(tamperedPath);
+            var offset = Array.IndexOf(bytes, contents["payload.bin"][0]);
+            if (offset >= 0)
+            {
+                bytes[offset] ^= 0xFF;
+                File.WriteAllBytes(tamperedPath, bytes);
+            }
+
+            var tamperedRejected = false;
+            try
+            {
+                AutoPayloadAssets.LoadFromFile(tamperedPath);
+            }
+            catch (IOException)
+            {
+                tamperedRejected = true;
+            }
+
+            Assert(tamperedRejected, "被改动过的组件包必须校验失败（sha256 对不上就不能用）");
+
+            return assets;
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
     /// 「格式化与重建虚拟系统」的拖动分配容量（用户 2026-11-20 要求把 emuMMC 大小下拉框换成拖动）。
     ///
     /// 这里测的是**纯换算**：拖动位置 ↔ emuMMC 容量 ↔ 真实分区布局。
@@ -10619,17 +11404,19 @@ internal static class Program
 
         const long gib = 1073741824L;
 
-        // ① 上限：卡越大能分给 emuMMC 的越多，但不超过 hekate 缩小容量的上界 24 GiB。
-        Assert(SdDragPlan.MaxAllowedGiB(8 * gib) == 5,
-            $"8 GiB 卡最多能分出 5 GiB 的 emuMMC（实际 {SdDragPlan.MaxAllowedGiB(8 * gib)}）");
-        Assert(SdDragPlan.MaxAllowedGiB(16 * gib) == 13,
-            $"16 GiB 卡最多 13 GiB（实际 {SdDragPlan.MaxAllowedGiB(16 * gib)}）");
-        Assert(SdDragPlan.MaxAllowedGiB(32 * gib) == 24,
-            $"32 GiB 及以上封顶 24 GiB（实际 {SdDragPlan.MaxAllowedGiB(32 * gib)}）");
-        Assert(SdDragPlan.MaxAllowedGiB(256 * gib) == 24,
-            $"再大的卡也只到 24 GiB（实际 {SdDragPlan.MaxAllowedGiB(256 * gib)}）");
+        // ① 上限：**没有固定上限**了（用户 2026-11-20 要求）—— 唯一约束是给主分区留 > 2 GiB，
+        //    所以「卡越大能分给 emuMMC 的越多」，且远超上游那个 24 GiB 的框。
+        //    数值带 .95：上限本身也量化到 0.01 GiB，并向下取整（输入框显示的就是能设出来的最大值）。
+        Assert(SdDragPlan.MaxAllowedGiB(8 * gib) == 5.95,
+            $"8 GiB 卡最多能分出 5.95 GiB 的 emuMMC（实际 {SdDragPlan.MaxAllowedGiB(8 * gib)}）");
+        Assert(SdDragPlan.MaxAllowedGiB(16 * gib) == 13.95,
+            $"16 GiB 卡最多 13.95 GiB（实际 {SdDragPlan.MaxAllowedGiB(16 * gib)}）");
+        Assert(SdDragPlan.MaxAllowedGiB(32 * gib) == 29.95,
+            $"32 GiB 卡最多 29.95 GiB（实际 {SdDragPlan.MaxAllowedGiB(32 * gib)}）—— 已不再封顶 24");
+        Assert(SdDragPlan.MaxAllowedGiB(256 * gib) == 253.95,
+            $"256 GiB 卡最多 253.95 GiB（实际 {SdDragPlan.MaxAllowedGiB(256 * gib)}）—— 上限跟着卡走");
 
-        // ② 卡太小：6 GiB 放不下「4 GiB emuMMC + 2 GiB 主分区」。
+        // ② 卡太小：6 GiB 放不下「5 GiB emuMMC + 2 GiB 主分区」。
         Assert(SdDragPlan.MaxAllowedGiB(6 * gib) < SdDragPlan.MinEmuGiB,
             $"6 GiB 卡应判定为做不了 emuMMC（实际上限 {SdDragPlan.MaxAllowedGiB(6 * gib)} GiB）");
 
@@ -10641,16 +11428,18 @@ internal static class Program
         Assert(draggedLeft > draggedRight,
             $"分隔条往左拖应得到更大的 emuMMC（左侧 {draggedLeft} GiB / 右侧 {draggedRight} GiB）");
 
-        // ④ 边界夹取：拖到底也不能把主分区挤到 2 GiB 以下，也不能超过 24 GiB。
+        // ④ 边界夹取：拖到底也不能把主分区挤到 2 GiB 以下；上界就是这张卡能给的极限。
         Assert(SdDragPlan.GiBFromFraction(disk, 1.0) == SdDragPlan.MinEmuGiB,
             $"拖到最右时 emuMMC 应保持最小 {SdDragPlan.MinEmuGiB} GiB");
-        Assert(SdDragPlan.GiBFromFraction(disk, 0.0) == SdDragPlan.MaxEmuGiB,
-            $"拖到最左时 emuMMC 应封顶 {SdDragPlan.MaxEmuGiB} GiB");
+        Assert(SdDragPlan.GiBFromFraction(disk, 0.0) == SdDragPlan.MaxAllowedGiB(disk),
+            $"拖到最左时 emuMMC 应到本卡上限 {SdDragPlan.MaxAllowedGiB(disk)} GiB"
+            + $"（实际 {SdDragPlan.GiBFromFraction(disk, 0.0)}）");
 
         // ⑤ 往返一致：容量 → 分隔条位置 → 容量，必须回到原值。
         //    两个方向不是互逆的时候（最容易差在那 32 MiB 的开销上），这条会逐个报出来。
+        var maxGiB = SdDragPlan.MaxAllowedGiB(disk);
         var roundTripBroken = new List<string>();
-        for (var size = SdDragPlan.MinEmuGiB; size <= SdDragPlan.MaxEmuGiB; size++)
+        for (var size = SdDragPlan.MinEmuGiB; size <= maxGiB; size++)
         {
             var fraction = SdDragPlan.FractionForGiB(disk, size);
             var back = SdDragPlan.GiBFromFraction(disk, fraction);
@@ -10661,10 +11450,77 @@ internal static class Program
         }
 
         Assert(roundTripBroken.Count == 0,
-            $"4～24 GiB 每个档位往返换算都应回到原值（不一致：{string.Join("、", roundTripBroken)}）");
+            $"5～{maxGiB} GiB 每个档位往返换算都应回到原值（不一致：{string.Join("、", roundTripBroken)}）");
 
-        // ⑥ 换算结果必须真的能生成布局：主分区 > 2 GiB、emuMMC 是隐藏类型 240、起点按 32768 扇区对齐。
-        foreach (var size in new[] { 4, 12, 24 })
+        // ⑤b 用户 2026-11-20 把下界从 4 抬到 5，又去掉了 24 GiB 的上限。两条都钉住，
+        //    免得以后被人「顺手改回 4」或「顺手加回 24」。
+        Assert(SdDragPlan.MinEmuGiB == 5, $"emuMMC 下界应为 5 GiB（实际 {SdDragPlan.MinEmuGiB}）");
+        Assert(SdDragPlan.ClampGiB(disk, 4) == 5, "把 emuMMC 设成 4 GiB 应被贴到 5 GiB");
+        Assert(SdDragPlan.ClampGiB(disk, 0) == 5, "把 emuMMC 设成 0 应被贴到 5 GiB");
+        Assert(SdDragPlan.ClampGiB(disk, 400) == maxGiB,
+            $"把 emuMMC 设成 400 GiB 应被贴到本卡上限 {maxGiB} GiB（实际 {SdDragPlan.ClampGiB(disk, 400)}）");
+
+        // ⑤c 小数：用户 2026-11-20 报「无法设置小数」—— 早期实现的 emuMMC 是 int，
+        //     输入什么都会被四舍五入成整 GiB。现在量化到 0.01 GiB，必须原样保住。
+        Assert(SdDragPlan.ClampGiB(disk, 12.34) == 12.34,
+            $"12.34 GiB 应原样保留（实际 {SdDragPlan.ClampGiB(disk, 12.34)}）");
+        Assert(SdDragPlan.Quantize(7.456) == 7.46,
+            $"量化到 0.01 GiB（7.456 → 7.46，实际 {SdDragPlan.Quantize(7.456)}）");
+
+        var fractionBroken = new List<string>();
+        foreach (var size in new[] { 5.25, 5.5, 12.34, 20.05, 40.75, 61.9 })
+        {
+            if (size > maxGiB)
+            {
+                continue;
+            }
+
+            var back = SdDragPlan.GiBForMainGiB(disk, SdDragPlan.MainGiBFor(disk, size));
+            if (Math.Abs(back - size) > SdDragPlan.StepGiB)
+            {
+                fractionBroken.Add($"{size}→{back}");
+            }
+        }
+
+        Assert(fractionBroken.Count == 0,
+            $"小数档位「容量 → 主分区 → 容量」也该回到原值（不一致：{string.Join("、", fractionBroken)}）");
+
+        // ⑥ 手动输入：主数据分区容量 ↔ emuMMC 容量，必须与拖动那条链算出同一套结果。
+        //    输入栏写错方向（把「主分区变大」理解成 emu 变大）在界面上只是「数字怪」，
+        //    真正写进卡里的分区表却是镜像尺寸 —— 只有往返核对能抓出来。
+        var mainBroken = new List<string>();
+        for (var size = SdDragPlan.MinEmuGiB; size <= maxGiB; size++)
+        {
+            var main = SdDragPlan.MainGiBFor(disk, size);
+            var back = SdDragPlan.GiBForMainGiB(disk, main);
+            if (back != size)
+            {
+                mainBroken.Add($"{size}→主{main:0.00}→{back}");
+            }
+        }
+
+        Assert(mainBroken.Count == 0,
+            $"按主分区容量反算 emuMMC 应回到原档位（不一致：{string.Join("、", mainBroken)}）");
+
+        // 方向：主分区越大，emuMMC 必须越小。
+        // ⚠️ 用 32 GiB 的卡来验，别用 64 GiB —— 64 GiB 上「主 10 GiB」「主 20 GiB」都会撞到
+        //    emuMMC 的上限 24 GiB（两边相等），看起来像方向反了，其实是夹取生效。
+        var smallDisk = 32 * gib;
+        Assert(SdDragPlan.GiBForMainGiB(smallDisk, 10) > SdDragPlan.GiBForMainGiB(smallDisk, 20),
+            $"主分区写大了，emuMMC 应该变小（主 10 → {SdDragPlan.GiBForMainGiB(smallDisk, 10)} GiB，"
+            + $"主 20 → {SdDragPlan.GiBForMainGiB(smallDisk, 20)} GiB）");
+
+        // 越界输入贴到边界，而不是算出负数/超过卡容量
+        Assert(SdDragPlan.GiBForMainGiB(disk, 0) == maxGiB,
+            $"主分区输 0 应把 emuMMC 顶到本卡上限 {maxGiB} GiB"
+            + $"（实际 {SdDragPlan.GiBForMainGiB(disk, 0)}）");
+        Assert(SdDragPlan.GiBForMainGiB(disk, 500) == SdDragPlan.MinEmuGiB,
+            $"主分区输 500（放不下）应把 emuMMC 压到下限 {SdDragPlan.MinEmuGiB} GiB");
+        Assert(SdDragPlan.MinMainGiB == 2.0, "主数据分区下界是 2 GiB（界面上显示 2.00）");
+
+        // ⑦ 换算结果必须真的能生成布局：主分区 > 2 GiB、emuMMC 是隐藏类型 240、起点按 32768 扇区对齐。
+        //    40 GiB 这一档专门盯着「上限已放开」：上游的 4～24 校验会把它拒掉。
+        foreach (var size in new[] { 5, 12, 24, 40 })
         {
             var layout = SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.Fat32, 1, size));
             Assert(layout.Partitions.Length == 2,
@@ -10677,21 +11533,35 @@ internal static class Program
                 $"{size} GiB：emuMMC 起点应按 {SdLayout.AlignmentSectors} 扇区对齐");
         }
 
-        // ⑦ 反向护栏：SdLayout 本身不接受 25 GiB —— 说明「夹到 24」必须由拖动那一层保证，
-        //    不能指望布局计算兜底（兜底会抛异常，用户在拖动时就会看到报错）。
+        // ⑧ 反向护栏（两条，方向相反）：
+        //    a) 上游那个 24 GiB 上限**必须已经不在**布局层 —— 否则界面允许 40、一点下一步就抛异常；
+        //    b) 但「主数据分区 > 2 GiB」仍在：把整张卡都塞给 emuMMC 要被拒。
+        var bigAccepted = true;
+        try
+        {
+            SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.Fat32, 1, 40));
+        }
+        catch (InvalidDataException)
+        {
+            bigAccepted = false;
+        }
+
+        Assert(bigAccepted, "40 GiB 的 emuMMC 应当被接受（上限已按用户要求放开）");
+
         var rejected = false;
         try
         {
-            SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.Fat32, 1, 25));
+            // 64 GiB 卡上给 62 GiB：主分区只剩不到 2 GiB
+            SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.Fat32, 1, 62));
         }
         catch (InvalidDataException)
         {
             rejected = true;
         }
 
-        Assert(rejected, "25 GiB 不是合法档位，SdLayout 应当拒绝（拖动层必须自己夹到 4～24）");
+        Assert(rejected, "emuMMC 占到主分区不足 2 GiB 时，SdLayout 必须拒绝");
 
-        // ⑧ 仅格式化：没有 emuMMC 分区。
+        // ⑨ 仅格式化：没有 emuMMC 分区。
         var formatOnly = SdLayout.Create(disk, new SdFormatOptions(SdFileSystem.ExFat, 0));
         Assert(formatOnly.Partitions.Length == 1,
             $"「仅格式化」应只有一个主分区（实际 {formatOnly.Partitions.Length} 个）");

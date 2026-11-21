@@ -16,6 +16,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using SwitchCfwWizard.Infrastructure;
 using SwitchCfwWizard.Localization;
+using SwitchCfwWizard.Models;
 using SwitchCfwWizard.ViewModels;
 
 namespace SwitchCfwWizard.SdReset;
@@ -96,7 +97,94 @@ public partial class SdResetWindow : Window
 
     private Dictionary<string, byte[]>? _assets;
 
-    private int _emuGiB = 12;
+    private double _emuGiB = 12d;
+
+    /// <summary>
+    /// 这个窗口里可选的做法（用户 2026-11-21：六个选项**同级**）。
+    ///
+    /// 用一个枚举而不是六个 bool：那六个本来就是**互斥**的（同一个 <c>GroupName</c> 的单选按钮），
+    /// 六份状态必然有一天出现「两个都为 true」，而写盘代码只能走一条路。
+    /// </summary>
+    private enum Mode
+    {
+        /// <summary>清卡 → 重建分区表（主 + emuMMC）→ 格式化 → 安装整合包。</summary>
+        Rebuild,
+
+        /// <summary>清卡 → 整卡一个主分区 → 格式化。</summary>
+        FormatOnly,
+
+        /// <summary>只重新格式化主数据分区，不动分区表与 emuMMC。</summary>
+        FormatMain,
+
+        /// <summary>只清空 emuMMC 隐藏分区前 16 MiB，不动分区表与主分区。</summary>
+        FormatEmu,
+
+        /// <summary>只把组件包写到卡上（下次开机由它创建 emuMMC），不动分区表。</summary>
+        CreateFiles,
+
+        /// <summary>重写分区表（主 + emuMMC）并格式化主分区，但**不装整合包**。</summary>
+        Repartition,
+    }
+
+    /// <summary>当前选中的做法 —— 由那六个单选按钮的勾选状态算出来，不另存一份。</summary>
+    private Mode CurrentMode
+    {
+        get
+        {
+            if (OnlyFormat.IsChecked == true)
+            {
+                return Mode.FormatOnly;
+            }
+
+            if (ModeFormatMain.IsChecked == true)
+            {
+                return Mode.FormatMain;
+            }
+
+            if (ModeFormatEmu.IsChecked == true)
+            {
+                return Mode.FormatEmu;
+            }
+
+            if (ModeCreateFiles.IsChecked == true)
+            {
+                return Mode.CreateFiles;
+            }
+
+            if (ModeRepartition.IsChecked == true)
+            {
+                return Mode.Repartition;
+            }
+
+            return Mode.Rebuild;
+        }
+    }
+
+    /// <summary>日志里用的模式名。界面文案一律走语言包，这里只是给运行日志看的。</summary>
+    private static string ModeText(Mode mode) => mode switch
+    {
+        Mode.FormatOnly => "格式化 TF 卡并恢复单分区",
+        Mode.FormatMain => "只格式化主数据分区",
+        Mode.FormatEmu => "只清空 emuMMC 分区",
+        Mode.CreateFiles => "只创建 emuMMC 所需文件",
+        Mode.Repartition => "重新分区主数据分区和 emuMMC",
+        _ => "格式化并重建 emuMMC",
+    };
+
+    /// <summary>本次是「不动分区表」的手术（格式化主分区 / 清 emuMMC / 只创建所需文件）。</summary>
+    private bool SurgeryMode => CurrentMode is Mode.FormatMain or Mode.FormatEmu or Mode.CreateFiles;
+
+    /// <summary>重新分区档：和「重建」一样写分区表，区别只在于**不装整合包**。</summary>
+    private bool RepartitionOnly => CurrentMode == Mode.Repartition;
+
+    /// <summary>要显示「重建后的布局」与拖动条：只有会写分区表的两种（重建 / 重新分区）。</summary>
+    private bool UsesLayout => CurrentMode is Mode.Rebuild or Mode.Repartition;
+
+    /// <summary>
+    /// 本次是否真的会装整合包。重做分区那个选项一律不装 —— 它就是「只要分区和格式化，
+    /// 不要内容」，否则和第一个选项「格式化并重建 emuMMC」没有区别。
+    /// </summary>
+    private bool InstallsPackage => _installPackage && CurrentMode == Mode.Rebuild;
 
     private string _layoutSummary = string.Empty;
 
@@ -198,7 +286,10 @@ public partial class SdResetWindow : Window
     private SdFormatOptions BuildOptions()
     {
         var fileSystem = FileSystemPicker.SelectedIndex == 1 ? SdFileSystem.ExFat : SdFileSystem.Fat32;
-        var emu = WithEmu.IsChecked == true ? 1 : 0;
+
+        // 「重新分区主数据分区和 emuMMC」虽然不装整合包，但它**要**一个 emuMMC 分区，
+        // 所以这里必须把 emu 计成 1 —— 否则会按「整卡一个主分区」去算布局。
+        var emu = UsesLayout ? 1 : 0;
         return new SdFormatOptions(fileSystem, emu, _emuGiB);
     }
 
@@ -213,11 +304,12 @@ public partial class SdResetWindow : Window
         _layout = null;
         _layoutSummary = string.Empty;
 
-        var rebuild = WithEmu.IsChecked == true;
+        var rebuild = UsesLayout;
         LayoutBarHost.Visibility = Visibility.Collapsed;
         LegendPanel.Visibility = Visibility.Collapsed;
         LegendPanelEmu.Visibility = Visibility.Collapsed;
         DragHint.Visibility = Visibility.Collapsed;
+        RangeHint.Visibility = Visibility.Collapsed;
         LayoutPlaceholder.Visibility = Visibility.Visible;
         LayoutPlaceholder.Text = Loc["SdReset.Layout.Empty"];
 
@@ -230,6 +322,35 @@ public partial class SdResetWindow : Window
         try
         {
             device.EnsureResetAllowed();
+
+            // 「不动分区表」的三种手术：没有「重建后的布局」可显示，
+            // 这里必须**明说保留现有分区**，否则用户会以为下面那块空白是没加载出来。
+            if (SurgeryMode)
+            {
+                _layout = null;
+
+                // ⚠️ 三个字面量各写一次：语言键检查器按源码里的字面量对账。
+                if (CurrentMode == Mode.FormatMain)
+                {
+                    _layoutSummary = Loc["SdReset.Surgery.MainSummary"];
+                    LayoutPlaceholder.Text = Loc["SdReset.Surgery.Main"];
+                }
+                else if (CurrentMode == Mode.FormatEmu)
+                {
+                    _layoutSummary = Loc["SdReset.Surgery.WipeSummary"];
+                    LayoutPlaceholder.Text = Loc["SdReset.Surgery.Wipe"];
+                }
+                else
+                {
+                    _layoutSummary = Loc["SdReset.Surgery.FilesSummary"];
+                    LayoutPlaceholder.Text = Loc["SdReset.Surgery.Files"];
+                }
+
+                DeviceDetails.Text = string.Format(Loc["SdReset.Device.Detail"], device.Capacity / 1073741824d);
+                LayoutPlaceholder.Visibility = Visibility.Visible;
+                StartButton.IsEnabled = !_busy;
+                return;
+            }
 
             var options = BuildOptions();
             if (rebuild)
@@ -263,14 +384,20 @@ public partial class SdResetWindow : Window
 
             _layoutSummary = string.Join("\n", parts);
 
-            MainSizeText.Text = Bytes(layout.Main.Length);
-            EmuSizeText.Text = layout.Partitions.Length > 1 ? Bytes(layout.Partitions[1].Length) : "-";
+            MainSizeBox.IsEnabled = rebuild;
+            EmuSizeBox.IsEnabled = rebuild;
+            SyncSizeInputs();
 
             LegendPanel.Visibility = Visibility.Visible;
             LegendPanelEmu.Visibility = rebuild ? Visibility.Visible : Visibility.Collapsed;
             LayoutBarHost.Visibility = rebuild ? Visibility.Visible : Visibility.Collapsed;
             DragHint.Visibility = rebuild ? Visibility.Visible : Visibility.Collapsed;
             LayoutPlaceholder.Visibility = rebuild ? Visibility.Collapsed : Visibility.Visible;
+
+            // 可分配范围按**这张卡**算出来写在下面（用户 2026-11-20 要求：主分区 2 GiB / emuMMC 5 GiB 起）
+            var maxEmu = SdDragPlan.MaxAllowedGiB(device.Capacity);
+            RangeHint.Text = string.Format(Loc["SdReset.Layout.Range"], maxEmu);
+            RangeHint.Visibility = rebuild ? Visibility.Visible : Visibility.Collapsed;
 
             if (!rebuild)
             {
@@ -341,8 +468,143 @@ public partial class SdResetWindow : Window
         }
 
         var next = SdDragPlan.GiBFromFraction(device.Capacity, fraction);
-        if (next == 0 || next == _emuGiB)
+
+        // 量化步长是 0.01 GiB：位移不到半步就当没动，避免拖动时整窗重排几十次
+        if (next <= 0d || Math.Abs(next - _emuGiB) < SdDragPlan.StepGiB / 2d)
         {
+            return false;
+        }
+
+        _emuGiB = next;
+        UpdatePreview();
+        return true;
+    }
+
+    // ── 手动输入容量（用户 2026-11-20 要求：大小也能直接输）──────────
+
+    /// <summary>
+    /// 把两个输入框刷成**当前布局的真实值**。
+    ///
+    /// 只在提交之后（以及布局变化之后）调用，不跟着每次按键刷 ——
+    /// 边打字边回填会把「12」在打到「1」时就改成别的数。
+    /// </summary>
+    private void SyncSizeInputs()
+    {
+        if (_layout is null)
+        {
+            MainSizeBox.Text = string.Empty;
+            EmuSizeBox.Text = string.Empty;
+            return;
+        }
+
+        MainSizeBox.Text = (_layout.Main.Length / (double)SdLayout.GiB).ToString("0.00");
+
+        // emuMMC 显示的是**我们配置的那个值**（可以是小数），不是分区字节数 ——
+        // 后者含 32 MiB 开销，显示成 11.97 会让人以为自己输错了。
+        EmuSizeBox.Text = _layout.Partitions.Length > 1
+            ? _emuGiB.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
+            : "0.00";
+    }
+
+    private void SizeBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitSizeInput(fromEmu: ReferenceEquals(sender, EmuSizeBox));
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            SyncSizeInputs();
+            e.Handled = true;
+        }
+    }
+
+    private void MainSizeBox_LostFocus(object sender, RoutedEventArgs e) => CommitSizeInput(fromEmu: false);
+
+    private void EmuSizeBox_LostFocus(object sender, RoutedEventArgs e) => CommitSizeInput(fromEmu: true);
+
+    /// <summary>
+    /// 提交输入框里的数字。被夹回去（超范围 / 打错字 / 没选设备）时**把真实值写回框里** ——
+    /// 悄悄改成别的数、框里却还留着你输的值，是最难查的一种「和界面不一致」。
+    /// </summary>
+    private void CommitSizeInput(bool fromEmu)
+    {
+        if (_busy || DevicePicker.SelectedItem is not SdDevice)
+        {
+            SyncSizeInputs();
+            return;
+        }
+
+        var text = (fromEmu ? EmuSizeBox : MainSizeBox).Text;
+
+        if (!double.TryParse(text, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var value)
+            && !double.TryParse(text, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.CurrentCulture, out value))
+        {
+            SyncSizeInputs();
+            return;
+        }
+
+        if (fromEmu)
+        {
+            ApplyEmuGiB(value);
+        }
+        else
+        {
+            ApplyMainGiB(value);
+        }
+    }
+
+    /// <summary>
+    /// 直接设定 emuMMC 容量（GiB，**可带小数**）。与拖动走同一套夹取 + 量化（步长 0.01 GiB），
+    /// 超范围就贴到边界。返回是否真的改变了容量 —— 自检用它把「输入 → 布局变化」这条链接上。
+    /// </summary>
+    internal bool ApplyEmuGiB(double gib)
+    {
+        if (DevicePicker.SelectedItem is not SdDevice device)
+        {
+            return false;
+        }
+
+        var next = SdDragPlan.ClampGiB(device.Capacity, gib);
+        if (next <= 0d)
+        {
+            SyncSizeInputs();
+            return false;
+        }
+
+        // 量化后再比：12.004 与 12.00 是同一个档位，不该触发一次整窗刷新
+        if (Math.Abs(next - _emuGiB) < SdDragPlan.StepGiB / 2d)
+        {
+            SyncSizeInputs();
+            return false;
+        }
+
+        _emuGiB = next;
+        UpdatePreview();
+        return true;
+    }
+
+    /// <summary>直接设定**主数据分区**容量（GiB，可带小数），其余留给 emuMMC。反向换算见 <see cref="SdDragPlan.GiBForMainGiB"/>。</summary>
+    internal bool ApplyMainGiB(double mainGiB)
+    {
+        if (DevicePicker.SelectedItem is not SdDevice device)
+        {
+            return false;
+        }
+
+        var next = SdDragPlan.GiBForMainGiB(device.Capacity, mainGiB);
+        if (next <= 0d)
+        {
+            SyncSizeInputs();
+            return false;
+        }
+
+        if (Math.Abs(next - _emuGiB) < SdDragPlan.StepGiB / 2d)
+        {
+            SyncSizeInputs();
             return false;
         }
 
@@ -390,6 +652,55 @@ public partial class SdResetWindow : Window
     private sealed class RelayProgress(Action<UpdateProgress> action) : IProgress<UpdateProgress>
     {
         public void Report(UpdateProgress value) => action(value);
+    }
+
+    // ── 组件包（下载 / 解压）进度 ────────────────────────────────
+
+    /// <summary>
+    /// 组件包下载 / 解压进度 → 设置页那张卡里的两条进度条（用户 2026-11-21 要求在这里展示）。
+    ///
+    /// 用 <see cref="Progress{T}"/> 而不是自己转发：它的回调会被 post 回**创建它的线程**
+    /// （这里是 UI 线程），而下载与解压都跑在线程池上 —— 直接改控件会抛
+    /// 「调用线程无法访问此对象」。
+    /// </summary>
+    private IProgress<AutoEmuProgress> EmuProgressReporter() => new Progress<AutoEmuProgress>(ShowEmuProgress);
+
+    private void ShowEmuProgress(AutoEmuProgress progress)
+    {
+        EmuPreparePanel.Visibility = Visibility.Visible;
+
+        // 「下载完 → 开始解压」时把下载那条补满：它不是没跑，是跑完了。
+        if (progress.Kind == AutoEmuStage.Extract)
+        {
+            EmuDownloadBar.IsIndeterminate = false;
+            EmuDownloadBar.Value = 100;
+        }
+
+        var useExtract = progress.Kind == AutoEmuStage.Extract;
+        var bar = useExtract ? EmuExtractBar : EmuDownloadBar;
+        var label = useExtract ? EmuExtractLabel : EmuDownloadLabel;
+
+        label.Text = string.IsNullOrWhiteSpace(progress.Detail)
+            ? progress.Stage
+            : $"{progress.Stage} · {progress.Detail}";
+
+        bar.IsIndeterminate = progress.Percent is null;
+        bar.Value = progress.Percent ?? 0d;
+    }
+
+    /// <summary>
+    /// 每次开始准备前把两条进度条归零：上一次留下的 100% 会被误读成
+    /// 「这次已经下好了、正在解压」，可其实还在查 Release。
+    /// </summary>
+    private void ResetEmuProgress()
+    {
+        EmuDownloadLabel.Text = Loc["AutoEmu.Stage.Query"];
+        EmuExtractLabel.Text = Loc["AutoEmu.Stage.Extract"];
+        EmuDownloadBar.IsIndeterminate = true;
+        EmuDownloadBar.Value = 0d;
+        EmuExtractBar.IsIndeterminate = true;
+        EmuExtractBar.Value = 0d;
+        EmuPreparePanel.Visibility = Visibility.Visible;
     }
 
     private void Tick()
@@ -493,16 +804,18 @@ public partial class SdResetWindow : Window
         {
             _device = device;
             _options = BuildOptions();
-            _layout = SdLayout.Create(device.Capacity, _options);
+            _layout = SurgeryMode ? null : SdLayout.Create(device.Capacity, _options);
 
-            Log($"开始准备：{device.Display}；主分区 {Bytes(_layout.Main.Length)}"
-                + (_layout.Partitions.Length > 1 ? $"，emuMMC {Bytes(_layout.Partitions[1].Length)}" : "，仅格式化"));
+            Log(SurgeryMode
+                ? $"开始准备：{device.Display}；{ModeText(CurrentMode)}（分区表保持不变）"
+                : $"开始准备：{device.Display}；主分区 {Bytes(_layout!.Main.Length)}"
+                  + (_layout.Partitions.Length > 1 ? $"，emuMMC {Bytes(_layout.Partitions[1].Length)}" : "，恢复单分区"));
 
             SetStep(2);
             SetBusy(true, canCancel: true);
             await Task.Run(VerifyBeforeErase);
 
-            if (_options.EmuCount == 1 && _installPackage)
+            if (!SurgeryMode && _layout is not null && _options.EmuCount == 1 && InstallsPackage)
             {
                 // 现场复核：对话框打开期间主界面可能被改过（比如把勾选全取消了）。
                 if (!_viewModel.HasCustomSelection)
@@ -510,10 +823,18 @@ public partial class SdResetWindow : Window
                     throw new IOException(Loc["SdReset.Error.NoSelection"]);
                 }
 
+                // ① 先取「重建 emuMMC」要用的组件包（下载 + 解压），进度显示在设置页那两条进度条上。
+                //    刻意放在 ShowResult **之前**：ShowResult 会把整个设置页收起来，
+                //    进度条也跟着消失 —— 而「下载进度要能在窗口里看到」正是这次的硬要求。
+                _cancel = new CancellationTokenSource();
+                ResetEmuProgress();
+                _assets = await _viewModel.EnsureAutoEmuAssetsAsync(EmuProgressReporter(), _cancel.Token);
+                EmuPreparePanel.Visibility = Visibility.Collapsed;
+
+                // ② 再生成整合包（那一段的进度走主界面总的 OverallProgress）
                 ShowResult(Loc["SdReset.Prepare.Title"], Loc["SdReset.Prepare.Hint"]);
                 SetBusy(true, canCancel: true);
 
-                _cancel = new CancellationTokenSource();
                 _pollViewModel = true;
 
                 // 开关只有一个，在「全局选项 → 输出内容」里。这里**只读、不改写**：
@@ -541,8 +862,6 @@ public partial class SdResetWindow : Window
                 await Task.Run(() => EmuTask.CheckPackage(_package), _cancel.Token);
                 Log($"整合包：{_package.Files.Length} 个文件 / {_package.Directories.Length} 个目录 / {Bytes(_package.TotalBytes)}");
 
-                _assets = await Task.Run(AutoPayloadAssets.Load, _cancel.Token);
-
                 if (_options.FileSystem == SdFileSystem.Fat32
                     && _package.Files.Any(f => f.Length > uint.MaxValue))
                 {
@@ -560,6 +879,18 @@ public partial class SdResetWindow : Window
 
                 await Task.Run(VerifyBeforeErase);
             }
+            else if (SurgeryMode && CurrentMode == Mode.CreateFiles)
+            {
+                // 只创建文件：不生成整合包，但**要**准备好组件包（同样走下载 + 进度条）。
+                // 这里**不调 ShowResult** —— 它会把设置页（含两条进度条）整块收起来，
+                // 用户就什么都看不到了。留在设置页，进度条自己会说话。
+                _cancel = new CancellationTokenSource();
+
+                ResetEmuProgress();
+                _assets = await _viewModel.EnsureAutoEmuAssetsAsync(EmuProgressReporter(), _cancel.Token);
+                EmuPreparePanel.Visibility = Visibility.Collapsed;
+                Log($"组件包就绪：{_assets.Count} 个文件", LogLevel.Success);
+            }
 
             _phase = Phase.Confirm;
             SettingsPanel.Visibility = Visibility.Collapsed;
@@ -567,22 +898,35 @@ public partial class SdResetWindow : Window
             ConfirmPanel.Visibility = Visibility.Visible;
 
             ConfirmDevice.Text = device.Display;
-            ConfirmLayout.Text = _layoutSummary + "\n"
-                                 + $"{Loc["SdReset.FileSystem"]}：" +
-                                 (_options.FileSystem == SdFileSystem.Fat32
-                                     ? Loc["SdReset.FileSystem.Fat32"]
-                                     : Loc["SdReset.FileSystem.ExFat"]);
+            ConfirmLayout.Text = SurgeryMode
+                ? _layoutSummary
+                : _layoutSummary + "\n"
+                  + $"{Loc["SdReset.FileSystem"]}：" +
+                  (_options.FileSystem == SdFileSystem.Fat32
+                      ? Loc["SdReset.FileSystem.Fat32"]
+                      : Loc["SdReset.FileSystem.ExFat"]);
 
             // 只做分区的那一次，必须在这里说清楚「不会装东西」——
             // 后面的完成页说就晚了，用户已经按了「清空并开始」。
-            if (!_installPackage)
+            if (!SurgeryMode && !InstallsPackage)
             {
-                ConfirmLayout.Text += "\n" + Loc["SdReset.Confirm.NoPackage"];
+                // 两条路的原因不同，不能共用一句：一个是「主界面没勾任何东西」，
+                // 另一个是「你自己选了只重做分区表」。
+                ConfirmLayout.Text += "\n" + (RepartitionOnly
+                    ? Loc["SdReset.Confirm.RepartitionNoPackage"]
+                    : Loc["SdReset.Confirm.NoPackage"]);
             }
+
+            // 标题、警告与「知晓」文案都按当前做法的**真实破坏范围**写 ——
+            // 只写几个文件的那一档要是还说「将清空整张卡」，用户就不敢按下一步了（2026-11-21 反馈）。
+            ApplyConfirmWording();
 
             Acknowledgement.IsChecked = false;
             AckHint.Visibility = Visibility.Visible;
-            StartButton.Content = Loc["SdReset.Button.Start"];
+
+            // 按钮文字跟着做法走（用户 2026-11-21 反馈：选「创建 emuMMC 所需文件」时右下角还写着
+            // 「清空并开始」，看着像要清整张卡）。只有真会清卡的那三种才用「清空并开始」。
+            StartButton.Content = ConfirmStartText();
         }
         catch (OperationCanceledException)
         {
@@ -616,6 +960,65 @@ public partial class SdResetWindow : Window
         }
     }
 
+    /// <summary>
+    /// 确认页的标题、警告语与「我已知晓…」文案，按**当前做法真实的破坏范围**写。
+    ///
+    /// 为什么必须分开（用户 2026-11-21 反馈）：三种手术里有一种只是往卡上写几个文件，
+    /// 结果确认页照样写着「将删除整张卡的所有数据」—— 用户当场就不敢按了，
+    /// 而且那句话本身就是错的（emuMMC 与主分区里的东西都不会被清）。
+    /// </summary>
+    private void ApplyConfirmWording()
+    {
+        var danger = (Brush)FindResource("DangerBrush");
+        var warning = (Brush)FindResource("WarningBrush");
+        var mode = CurrentMode;
+
+        if (mode == Mode.FormatMain)
+        {
+            ConfirmTitle.Text = Loc["SdReset.Confirm.TitleFormatMain"];
+            ConfirmWarning.Text = Loc["SdReset.Confirm.WarningFormatMain"];
+            ConfirmWarning.Foreground = danger;
+            Acknowledgement.Content = Loc["SdReset.Confirm.AckFormatMain"];
+        }
+        else if (mode == Mode.FormatEmu)
+        {
+            ConfirmTitle.Text = Loc["SdReset.Confirm.TitleFormatEmu"];
+            ConfirmWarning.Text = Loc["SdReset.Confirm.WarningFormatEmu"];
+            ConfirmWarning.Foreground = danger;
+            Acknowledgement.Content = Loc["SdReset.Confirm.AckFormatEmu"];
+        }
+        else if (mode == Mode.CreateFiles)
+        {
+            ConfirmTitle.Text = Loc["SdReset.Confirm.TitleCreateFiles"];
+            ConfirmWarning.Text = Loc["SdReset.Confirm.WarningCreateFiles"];
+            // 这一档只**新增/替换**文件、不动分区也不删用户数据，用警告色而不是危险色。
+            ConfirmWarning.Foreground = warning;
+            Acknowledgement.Content = Loc["SdReset.Confirm.AckCreateFiles"];
+        }
+        else
+        {
+            ConfirmTitle.Text = Loc["SdReset.Confirm.Title"];
+            ConfirmWarning.Text = Loc["SdReset.Confirm.Warning"];
+            ConfirmWarning.Foreground = danger;
+            Acknowledgement.Content = Loc["SdReset.Confirm.Ack"];
+        }
+    }
+
+    /// <summary>
+    /// 确认页主按钮该写什么。三种手术都不是「清空整张卡」，所以各有各的说法；
+    /// 会真清卡的那三种（重建 / 恢复单分区 / 重新分区）才用「清空并开始」。
+    ///
+    /// 抽成方法是为了让自检能直接对它下断言 —— 这句话写错的后果是「用户不敢按」，
+    /// 而它只在这一个分支里出现，靠肉眼比对三个档位很容易漏。
+    /// </summary>
+    private string ConfirmStartText() => CurrentMode switch
+    {
+        Mode.FormatMain => Loc["SdReset.Button.StartFormatMain"],
+        Mode.FormatEmu => Loc["SdReset.Button.StartFormatEmu"],
+        Mode.CreateFiles => Loc["SdReset.Button.StartCreateFiles"],
+        _ => Loc["SdReset.Button.Start"],
+    };
+
     private void BackToSettings()
     {
         _phase = Phase.Settings;
@@ -623,6 +1026,8 @@ public partial class SdResetWindow : Window
         ConfirmPanel.Visibility = Visibility.Collapsed;
         ResultPanel.Visibility = Visibility.Collapsed;
         AckHint.Visibility = Visibility.Collapsed;
+        // 进度卡只在「准备」那一小段时间里有意义；回到设置页还挂着会让人以为它还在跑。
+        EmuPreparePanel.Visibility = Visibility.Collapsed;
         StartButton.Visibility = Visibility.Visible;
         StartButton.Content = Loc["SdReset.Button.Next"];
         SetStep(1);
@@ -677,6 +1082,90 @@ public partial class SdResetWindow : Window
         Guard();
     }
 
+    /// <summary>
+    /// 三种「不动分区表」的手术（用户 2026-11-21 新增的三个选项）。
+    ///
+    /// 与 <see cref="WriteAsync"/> 分开是因为前置条件不同：那一条要重写分区表、再挂载、
+    /// 再装整合包；这里**分区表一个字节都不碰**。但闸门一样 —— 设备身份与占用检查
+    /// （<see cref="VerifyBeforeErase"/>）、以及每步的 <see cref="Guard"/> 都还在。
+    /// </summary>
+    private async Task RunSurgeryAsync()
+    {
+        var mode = CurrentMode;
+
+        // 三个手术各走一条路（<see cref="SdResetAction"/>）。
+        var action = mode switch
+        {
+            Mode.FormatMain => SdResetAction.FormatMain,
+            Mode.FormatEmu => SdResetAction.WipeEmuPartition,
+            _ => SdResetAction.CreateEmuFiles,
+        };
+
+        // 标题与提示按**实际动作**选，不用三元嵌套 —— 语言键检查器要求每处都是字面量。
+        if (mode == Mode.FormatMain)
+        {
+            ShowResult(Loc["SdReset.Surgery.TitleMain"], Loc["SdReset.Surgery.Hint"]);
+            Log("开始格式化主数据分区（分区表与 emuMMC 保持不变）");
+        }
+        else if (mode == Mode.FormatEmu)
+        {
+            ShowResult(Loc["SdReset.Surgery.TitleWipe"], Loc["SdReset.Surgery.Hint"]);
+            Log("开始清空 emuMMC 分区前 16 MiB（分区表保持不变）");
+        }
+        else
+        {
+            ShowResult(Loc["SdReset.Surgery.TitleFiles"], Loc["SdReset.Surgery.Hint"]);
+            Log("开始创建 emuMMC 所需文件（分区表保持不变）");
+        }
+
+        await Task.Run(VerifyBeforeErase);
+
+        SdResetStatus? final = null;
+        _lastLoggedStage = string.Empty;
+
+        await SdResetWorker.ExecuteAsync(
+            new SdResetRequest(
+                _device!,
+                _options!,
+                MountOnly: false,
+                ExpectedSignature: 0u,
+                Action: action,
+                AutoEmuZipPath: _viewModel.LastAutoEmuZipPath),
+            status =>
+            {
+                StatusText.Text = status.Error ?? status.Stage;
+
+                if (status.Stage != _lastLoggedStage)
+                {
+                    _lastLoggedStage = status.Stage;
+                    Log(status.Stage, status.Error is null ? LogLevel.Info : LogLevel.Error);
+                }
+
+                if (status.Finished)
+                {
+                    final = status;
+                }
+            });
+
+        if (final is null)
+        {
+            throw new IOException(Loc["SdReset.Error.NoResult"]);
+        }
+
+        if (final.Error is not null)
+        {
+            throw new IOException(final.Error);
+        }
+
+        // 清空 emuMMC 时引擎不挂载主分区（它没动分区表，盘符本来就在），
+        // 这里把盘符补上 —— 「弹出 TF 卡」按钮要靠它。
+        _root = final.Root ?? _device!.MountPoints.FirstOrDefault();
+        _phase = Phase.Mount;
+
+        Complete();
+        Log("完成：分区表未改动", LogLevel.Success);
+    }
+
     private async Task WriteAsync()
     {
         SetBusy(true);
@@ -689,6 +1178,13 @@ public partial class SdResetWindow : Window
 
         try
         {
+            // 两种「不动分区表」的手术：不安装整合包、不改分区表，跑完直接到完成页。
+            if (SurgeryMode)
+            {
+                await RunSurgeryAsync();
+                return;
+            }
+
             if ((int)_phase is >= 1 and <= 3)
             {
                 var mountOnly = _phase == Phase.Mount;
@@ -772,7 +1268,7 @@ public partial class SdResetWindow : Window
 
                 // 没有整合包（主界面没勾任何定制选项、用户选择了继续）：
                 // 分区与格式化就是这次的全部内容，不再进入安装 / 自动创建。
-                if (_options!.EmuCount == 0 || !_installPackage)
+                if (_options!.EmuCount == 0 || !InstallsPackage)
                 {
                     Complete();
                     return;
@@ -839,7 +1335,7 @@ public partial class SdResetWindow : Window
             });
 
             Complete();
-            Log(_installPackage ? "全部完成：分区、格式化、整合包与自动创建任务均已就绪" : "全部完成：只做了分区与格式化（未安装内容）",
+            Log(InstallsPackage ? "全部完成：分区、格式化、整合包与自动创建任务均已就绪" : "全部完成：只做了分区与格式化（未安装内容）",
                 LogLevel.Success);
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
@@ -919,12 +1415,60 @@ public partial class SdResetWindow : Window
         ResetProgress.Value = 100;
         ProgressPercent.Text = "100%";
 
-        var rebuild = _options!.EmuCount > 0;
-        var withPackage = rebuild && _installPackage;
+        // 三种「不动分区表」的手术有各自的完成语 —— 套用「重建」那句会让人以为分区被重做了。
+        if (SurgeryMode)
+        {
+            if (CurrentMode == Mode.FormatMain)
+            {
+                ResultTitle.Text = Loc["SdReset.Done.TitleFormatMain"];
+            }
+            else if (CurrentMode == Mode.FormatEmu)
+            {
+                ResultTitle.Text = Loc["SdReset.Done.TitleWipe"];
+            }
+            else
+            {
+                ResultTitle.Text = Loc["SdReset.Done.TitleCreateFiles"];
+            }
 
-        ResultTitle.Text = rebuild
-            ? (withPackage ? Loc["SdReset.Done.Title"] : Loc["SdReset.Done.TitlePartitionOnly"])
-            : Loc["SdReset.Done.TitleFormatOnly"];
+            ResultTitle.Foreground = (Brush)FindResource("SuccessBrush");
+
+            StatusText.Text = string.Empty;
+            ProgressPath.Text = string.Empty;
+            DownloadText.Text = string.Empty;
+            ResultHelp.Text = string.Empty;
+
+            if (CurrentMode == Mode.FormatMain)
+            {
+                CompletionAction.Text = Loc["SdReset.Done.ActionFormatMain"];
+            }
+            else if (CurrentMode == Mode.FormatEmu)
+            {
+                CompletionAction.Text = Loc["SdReset.Done.ActionWipe"];
+            }
+            else
+            {
+                CompletionAction.Text = Loc["SdReset.Done.ActionCreateFiles"];
+            }
+
+            RebuildInstructions.Visibility = Visibility.Collapsed;
+            CompletionPanel.Visibility = Visibility.Visible;
+
+            StartButton.Visibility = Visibility.Collapsed;
+            BackButton.Visibility = Visibility.Collapsed;
+            EjectResetButton.Visibility = _root is null ? Visibility.Collapsed : Visibility.Visible;
+            EjectResetButton.IsEnabled = true;
+            return;
+        }
+
+        var rebuild = _options!.EmuCount > 0;
+        var withPackage = rebuild && InstallsPackage;
+
+        ResultTitle.Text = RepartitionOnly
+            ? Loc["SdReset.Done.TitleRepartition"]
+            : rebuild
+                ? (withPackage ? Loc["SdReset.Done.Title"] : Loc["SdReset.Done.TitlePartitionOnly"])
+                : Loc["SdReset.Done.TitleFormatOnly"];
         ResultTitle.Foreground = (Brush)FindResource("SuccessBrush");
 
         StatusText.Text = string.Empty;
@@ -932,9 +1476,11 @@ public partial class SdResetWindow : Window
         DownloadText.Text = string.Empty;
         ResultHelp.Text = string.Empty;
 
-        CompletionAction.Text = rebuild
-            ? (withPackage ? Loc["SdReset.Done.Action"] : Loc["SdReset.Done.ActionPartitionOnly"])
-            : Loc["SdReset.Done.ActionFormatOnly"];
+        CompletionAction.Text = RepartitionOnly
+            ? Loc["SdReset.Done.ActionRepartition"]
+            : rebuild
+                ? (withPackage ? Loc["SdReset.Done.Action"] : Loc["SdReset.Done.ActionPartitionOnly"])
+                : Loc["SdReset.Done.ActionFormatOnly"];
         RebuildInstructions.Visibility = withPackage ? Visibility.Visible : Visibility.Collapsed;
         CompletionPanel.Visibility = Visibility.Visible;
 
@@ -946,7 +1492,23 @@ public partial class SdResetWindow : Window
 
     // ── 底部按钮 ─────────────────────────────────────────────────
 
-    private void Options_Changed(object sender, RoutedEventArgs e) => UpdatePreview();
+    private void Options_Changed(object sender, RoutedEventArgs e)
+    {
+        // ⚠️ XAML 加载期间就会触发：`WithEmu` 上写着 IsChecked="True"，BAML 把它落到
+        //    ToggleButton 上时 Checked 事件已经接好了 —— 可这时排在它后面的控件
+        //    （OnlyFormat、另外四个单选）还没被创建，字段全是 null。
+        //    实测症状是「窗口一构造就 NullReferenceException」，外面只能看到「无法构造」。
+        //    `_ready` 在 InitializeComponent 之后才置位，正好当这个总闸。
+        if (!_ready)
+        {
+            return;
+        }
+
+        // 六个选项是**同一组单选按钮**（GroupName="Mode"），互斥由 WPF 自己保证：
+        // 勾上一个，其余五个自动取消 —— 不需要我们再挨个 SetIsChecked(false)。
+        // 这里只要按新的勾选状态重算预览即可（CurrentMode 是算出来的，不是存的）。
+        UpdatePreview();
+    }
 
     private void Device_Changed(object sender, SelectionChangedEventArgs e)
     {

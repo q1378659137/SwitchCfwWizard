@@ -196,7 +196,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -o ../../dist
 | sys-clk | [zdm65477730/sys-clk](https://github.com/zdm65477730/sys-clk/releases) | `sys-clk.zip` → `out/` 根 |
 | SysDVR | [exelix11/SysDVR](https://github.com/exelix11/SysDVR/releases) | `SysDVR.zip` → `out/` 根 |
 | ldn_mitm | [Lusamine/ldn_mitm](https://github.com/Lusamine/ldn_mitm/releases) | `ldn_mitm_FW_x.x.x.zip` → `out/` 根 |
-| sphaira | [NaGaa95/sphaira](https://github.com/NaGaa95/sphaira/releases) | `sphaira.zip` → `out/` 根 |
+| sphaira | [NaGaa95/sphaira](https://github.com/NaGaa95/sphaira/releases) | `sphaira.zip` → `out/` 根（包里的 `nx2/` 是 Switch 2 那套，**不拷**） |
 | Fizeau | [zdm65477730/Fizeau](https://github.com/zdm65477730/Fizeau/releases) | `Fizeau.zip` → `out/` 根 |
 | NX-Activity-Log | [zdm65477730/NX-Activity-Log](https://github.com/zdm65477730/NX-Activity-Log/releases) | `NX-Activity-Log.nro` → `switch/NX-Activity-Log/` |
 | Switch-Firmware-Dumper | [mrdude2478/Switch-Firmware-Dumper](https://github.com/mrdude2478/Switch-Firmware-Dumper/releases) | `Firmware-Dumper.zip` → `switch/Firmware-Dumper/` |
@@ -292,6 +292,33 @@ dotnet publish -c Release -r win-x64 --self-contained true -o ../../dist
 > ⚠️ **TriPlayer 的包里含一个 sysmodule**（title `4200000000000FFF`，与 sys-ftpd 的 `420000000000000E` 只差末两位、**不是同一个**），按现有约定不声明 `SysmoduleTitleId`；这条交集结论由 `tools/check-upstream-facts.py` 的第 ④ 项联网复核。
 
 **插件类插件的下载地址与文件名都能改**：见「六、高级设置 → 插件文件」。
+
+### 左侧顶部：配置模板（联机 / 学习）
+
+组件列表**正上方**那张卡片（2026-11-21 新增）。下拉框里是**内嵌在程序里的两份模板**（不往 exe 旁边放文件）
+加上用户自己导入的（那些会落在 exe 同级的 `templates/`）：
+
+| 模板 | 勾了什么 | 关键差异 |
+| --- | --- | --- |
+| **联机**（`play`） | Atmosphere / Hekate / Ultrahand / Breeze / DBI / EdiZonOverlay / FTPD / JKSV / sphaira / Sys-botbase / Lockpick_RCM / emuiibo 等 13 个 | 不装 Sys-patch，`enable_dns_mitm=0`，**不**屏蔽序列号、不开 90DNS |
+| **学习**（`study`） | 在上面基础上再加 Sys-patch / Goldleaf / Haku33 / Luna-App / ldn_mitm / Linkalho | `enable_dns_mitm=1`，**屏蔽序列号 + 90DNS 四项全开** |
+
+- 名字走语言包（`Template.Play` / `Template.Study`），切到繁体或英文时下拉框里也跟着变；
+  自己导入的模板显示文件名。
+- **选中即生效，而且是整份导入**（用户 2026-11-21 要求）：模板的格式就是 `settings.json`，
+  所以**所有能读到的字段都会套用** —— 组件勾选、每个组件的选项、屏蔽序列号 / 90DNS、三个引导项
+  与它们的标题/ID/图、语言、主题、Token、代理、镜像、超时、下载源、插件文件槽、各种输出开关。
+  日志与卡片下方会写一行 `已应用模板「学习」：组件 47 个、选项 76 项、其它设置 45 项。`
+- ⚠️ **模板里没写的字段会回到默认值**。比如模板没有 `Proxy`，套用之后代理就被清空了
+  （这是「整份导入」的必然结果，不是 bug）。要保留自己的代理/Token，办法是：套完模板再填一次；
+  或者把你想保留的值写进一个 json，用「导入模板…」当成模板用。
+- **导入自己的模板**：点「导入模板…」选一个 json，它会先解析一遍（选错文件当场报错），
+  再复制进 `templates/` 并立刻应用。重名不会覆盖，会自动变成 `xxx-2.json`（与内嵌同名也一样）。
+- 想改内置模板：它已经编进程序了，改不了；复制一份改完用「导入模板…」加进来即可（会以 `-2` 后缀并列）。
+
+> 模板解析刻意**宽容**：允许注释与尾逗号、字段名大小写不敏感、数字型取值（`"bootwait": 5`）
+> 自动转成字符串、字符串形式的整数也能读进 int 字段；
+> 模板里有、当前版本没有的组件/选项只记一条警告，不影响其余部分。
 
 ### 右侧：全局选项
 
@@ -506,12 +533,38 @@ ComboBox / CheckBox / Expander 这三个也是**重画过**的：它们的默认
    大小与上游一致的文件、不联网（该开关与主界面生成共用同一个）。
 2. 点「格式化与重建虚拟系统」，在「① 分区设置」里：
    - 程序会自动选中**检测到的第一张** TF 卡（可改成别的卡）—— 请核对型号、容量与盘符；
-   - 选「格式化并重建 emuMMC」或「仅格式化」；
+   - **六种做法，同级单选**（2026-11-21 起：四个「小手术」不再缩在「恢复单分区」底下，它们各自就是一个选项；
+     同一组单选按钮，选一个其余自动取消）：
+
+     | 选项 | 动分区表 | 动 emuMMC | 动主分区 | 用途 |
+     |---|---|---|---|---|
+     | 格式化并重建 emuMMC（推荐） | 重写 | 重建 | 格式化 | 一条龙：分区 + 格式化 + 装整合包 |
+     | 格式化 TF 卡并恢复单分区 | 重写（整卡一个分区） | **删掉** | 格式化 | 回到「整卡一个主分区」的干净状态 |
+     | 仅格式化主数据分区 | 否 | 否 | **清空** | 只想把主分区重新格式化，emuMMC 与卡上分区原样留着 |
+     | 仅格式化 emuMMC 分区 | 否 | 清前 16 MiB | 否 | 虚拟系统坏了要重建，但主分区里的东西要留着 |
+     | 创建 emuMMC 所需文件 | 否 | 否 | 写入组件包 | 只补上「下次开机自动创建 emuMMC」那套文件 |
+     | 重新分区主数据分区和 emuMMC | **重写** | 重建 | 格式化 | 只重做分区与格式化，**不安装整合包** |
+
+     中间三个不动分区表：卡上的分区保持原样，**布局条会隐藏**（没什么可分配的）；
+     「重建」「恢复单分区」「重新分区」这三种要写分区表，布局条照常出现，可以拖容量。
    - **拖动布局条中间的分隔块**分配容量：分隔块越靠左，emuMMC 分区越大。下方实时显示两块各自的容量。
-     主数据分区至少保留 2 GiB；emuMMC 可调范围 4～24 GiB（hekate 缩小容量的上界）；
+     主数据分区至少保留 2 GiB；emuMMC **从 5 GiB 起、不设固定上限** —— 上限就是「这张卡剩下的空间」
+     （用户 2026-11-20 要求：只注意主分区的最低要求即可，别拦着人家用满）；
+   - **两个容量也能直接输入，且可以带小数**（2026-11-20 新增）：在「主数据分区」「emuMMC 隐藏分区」两栏里
+     敲数字（如 `12.5`、`40.25`），回车或点别处生效；改一个，另一个自动跟着变。
+     容量按 **0.01 GiB（10.24 MiB）** 量化，再细就没有意义了。
+     超出范围的输入会贴到最近的边界，并把真实值回填到输入框里
+     （避免「框里写 3，实际按 5 算」这种界面与结果不一致）。
    - 主分区格式选 FAT32（推荐）或 exFAT。
 3. 「② 准备与确认」：先按当前勾选**生成整合包**（这一步不动卡），生成完显示设备与最终布局，
    勾选「我已知晓该操作将清空所有数据」。
+   > 2026-11-21 起，「重建 emuMMC」要用的那 6 个文件（`payload.bin` / `nyx.bin` …）不再随程序发布，
+   > 而是**从 GitHub 的 Release 下载最新版**（默认 `q1378659137/AutoEmu`，地址可在「高级设置 → 重建 emuMMC
+   > 组件包地址」改），落在 **`download/AutoEmu/AutoEmu_<版本>.zip`**（每个组件一个文件夹，不和其它 zip 混在
+   > `download/` 根下）。下载与解压**各有一条进度条**，就在「① 分区设置」下面那块卡片里；
+   > 「优先下载预览版」「优先使用本地已下载的资源」两个开关对这份包同样生效。
+   > **程序里没有内嵌副本**：没网时就靠「优先使用本地已下载的资源」去复用 `download/AutoEmu/` 里已经下好的那份；
+   > 两样都没有时会明确报错（并说明怎么补），不会偷偷用一份过期组件。
 4. 点「清空并开始」→ 弹出 Windows 管理员授权（直接写物理磁盘需要提权）→ 分区、格式化、装包、逐文件校验。
 5. 「④ 电脑端完成」：安全弹出 TF 卡，插回 Switch 开机。若用 hekate 有线连接，先把 Switch **彻底关机**再重新开机。
 
@@ -1007,6 +1060,7 @@ SwitchCFW-20260915-114500.zip
 | 镜像站 | 只填域名（如 `https://gh.example.com`），留空 = 直接用 GitHub 官方地址。填了之后下载与版本查询都会用到它（查询是「官方优先、连不上才用它」）；**镜像站是第三方转发，配了 Token 时 Token 也会经它转发** |
 | boot.dat 下载地址 | 留空 = 用内置的默认地址。**可填的样式**：① 网页形态 `https://github.com/作者/仓库/blob/分支/路径`；② raw 形态 `https://raw.githubusercontent.com/作者/仓库/分支/路径`；③ GitHub 的 `/raw/` 形态（前两种最后都落到同一条 raw 地址上）。填别的站点也支持，只是那种地址没有备用通道。填了镜像站时它同样跟着走镜像。<br>输入框为空时框里会显示一行格式示例 |
 | 检查更新的地址 | 留空 = 用内置的默认地址（本项目的 releases 页）。**可填的样式**：① 直接写 `作者/仓库`；② 仓库地址 `https://github.com/作者/仓库`（它的 releases 页、某个 tag 的页、API 地址也都认得）。**只支持 GitHub 主机** —— 别的站点会明确报「地址用不了」，而不是拿着同一个路径去查 GitHub 得到一个会误导人的答案。<br>⚠️ **填了但格式不对 ⇒ 回落到默认地址**（2026-09-22 用户要求，与「下载源」同一约定），界面标红 + 日志各说一次 —— 不是把这次检查直接作废。<br>输入框为空时框里会显示一行格式示例；这个框与上面的「boot.dat 下载地址」那个框**同宽、同左边缘**（两个框都通栏）—— 曾经按「下载源」行的标签列缩进过 96px，用户 2026-09-22 否掉了（「前面空出来很多，有点难看」）。`--selftest` 用 `box-parity` 读**两个框各自渲染出来的左边缘与宽度**钉住 |
+| 重建 emuMMC 组件包地址 | 留空 = `https://github.com/q1378659137/AutoEmu/releases`（2026-11-21 新增）。「格式化并重建 emuMMC」要用的 6 个文件（`payload.bin` / `nyx.bin` …）从这个仓库的**最新 Release** 里下 `auto-emu.zip`。**可填的样式与「检查更新的地址」完全一致**（`作者/仓库`、仓库地址、releases 页、tag 页、API 地址都认），填错同样回落到默认地址并标红。下载物存进 **`download/AutoEmu/AutoEmu_<版本>.zip`**（每个组件一个文件夹；文件名带版本号，新旧两版并存，避免下了一半的残骸覆盖能用的那份） |
 | 下载源 | 逐个插件可改（见下） |
 
 **关于镜像站**：它换的是**地址**，不是「下载器」—— 程序本身没有任何变化，只是把每条 GitHub 地址按镜像站的规则改写一遍。三种改写形态（2026-09-19 用 `gh.shubiao.cc.cd` 逐条 curl 实测）：
@@ -1131,13 +1185,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\pack-source.ps1 -List 
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\pack-source.ps1 -Out D:\bak  # 换输出目录
 ```
 
-产物是 `publish/source/SwitchCFWizard-<版本>-src.zip`（当前 **129 个文件 / 解压 5.2 MB → 压缩后约 3.6 MB**）。
+产物是 `publish/source/SwitchCFWizard-<版本>-src.zip`（当前 **130 个文件 / 解压 2.68 MB → 压缩后 958 KB**）。
 包内**自带一个顶层目录**（解压不会散落一地）和一份 `_SOURCE-INFO.txt`：版本、打包时间、内容概览、
 **这一轮跳过了什么**、以及拿到包之后怎么构建 / 跑回归。
 
-> 体积比早期那一版（88 文件 / 700 KB）大了不少，不是混进了构建产物：
-> `SdReset/Assets/NsToolbox.AutoEmu.zip`（2.7 MB）和 `SdReset/Native/NsToolbox.Formatter.dll`（117 KB）
-> 是「格式化与重建虚拟系统」要用的二进制，**必须**跟着源码走，否则编出来的程序少了这个功能。
+> 体积从早期的 3.6 MB 掉到 1.0 MB，是因为 2026-11-21 把那 2.7 MB 的
+> `SdReset/Assets/NsToolbox.AutoEmu.zip` 从仓库里删了（它本来就只是「重建 emuMMC」的载荷，
+> 现在改成从 Release 下载，离线场景用「优先使用本地已下载的资源」复用 `download/AutoEmu/` 里那份）。
+> 源码里剩下的二进制只有 `SdReset/Native/NsToolbox.Formatter.dll`（117 KB）——
+> 「格式化与重建虚拟系统」的格式化核心，**必须**跟着源码走。
 > 剩下的大头是 `tools/ConfigSmokeTest/Program.cs`（636 KB，回归全在一个文件里）和 README 本身。
 
 打包内容 = 项目根下、除「构建产物 / 发布产物 / 运行痕迹 / 编辑器缓存」之外的全部文件。规则就是脚本里的

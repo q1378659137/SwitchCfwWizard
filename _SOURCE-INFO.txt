@@ -1,19 +1,19 @@
 ﻿SwitchCFWizard 源码包
 ==============================================
 
-  版本        0.2.0（取自 src/SwitchCfwWizard/SwitchCfwWizard.csproj）
-  打包时间    2026-11-20 15:56:28 +08:00
+  版本        0.2.1（取自 src/SwitchCfwWizard/SwitchCfwWizard.csproj）
+  打包时间    2026-11-21 21:49:48 +08:00
   打包脚本    tools/pack-source.ps1（仓库自带，可重复执行）
-  文件数      129
-  解压后体积  5.25 MB
-  压缩包      SwitchCFWizard-0.2.0-src.zip
+  文件数      134
+  解压后体积  2.75 MB
+  压缩包      SwitchCFWizard-0.2.1-src.zip
 
 内容概览
 ----------------------------------------------
   (根目录文件)                6 个文件
   samples                13 个文件
-  src                    94 个文件
-  tools                  16 个文件
+  src                    98 个文件
+  tools                  17 个文件
 
 已排除（打包时跳过，不在本包内）
 ----------------------------------------------
@@ -22,9 +22,8 @@
   __pycache__/       1 处
   bin/               3 处
   dist/              1 处
-  dist.stale-1120-132907/ 1 处
-  dist.stale-1120-140200/ 1 处
-  dist.stale-1120-155558/ 1 处
+  dist.stale-1121-214834/ 1 处
+  dist.stale-1121-214936/ 1 处
   obj/               3 处
   publish/           1 处
   按文件名 / 扩展名跳过：

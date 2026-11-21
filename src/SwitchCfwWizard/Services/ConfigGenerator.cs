@@ -1086,7 +1086,9 @@ public sealed class ConfigGenerator
             var merged = 0;
             if (Directory.Exists(unpacked))
             {
-                foreach (var relative in ArchiveExtractor.MergeDirectory(unpacked, outRoot, cancellationToken))
+                // definition.MergeSkip：包里夹带、但不该进 out 的目录（如 sphaira 的 nx2/）。
+                foreach (var relative in ArchiveExtractor.MergeDirectory(
+                             unpacked, outRoot, cancellationToken, definition.MergeSkip))
                 {
                     // 合并进来的组件本体也要进清单，否则：
                     //   · 下次换组件 / 换版本时旧文件永远清不掉，会被一起拷进 SD 卡
