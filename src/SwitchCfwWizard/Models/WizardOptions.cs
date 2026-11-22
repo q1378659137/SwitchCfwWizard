@@ -114,6 +114,8 @@ public sealed class WizardOptions
 
     public bool TriPlayer { get; set; }
 
+    public bool RoomCircuitLanywhere { get; set; }
+
     /// <summary>8G 运存支持（同时影响 Hekate payload 选择与 exosphere/引导项配置）。</summary>
     public bool Ram8Gb { get; set; }
 

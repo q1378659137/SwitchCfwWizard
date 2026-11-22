@@ -3551,18 +3551,81 @@ public sealed class MainViewModel : ObservableObject, ILogSink
             component.ConflictHintKey = null;
         }
 
+        // ── ① 先解除**上一次**由互斥加上的锁 ──
+        //
+        // 只解除自己加的（判据是 LockHintKey 正好是那一条），Sys-patch 的强制锁是
+        // UpdateForcedSelections 管的，这里去动它就会两边打架。
+        foreach (var component in Components)
+        {
+            if (string.Equals(component.LockHintKey, MutualExclusionLockKey, StringComparison.Ordinal))
+            {
+                component.SetLockHint(null);
+                component.IsSelectable = true;
+            }
+        }
+
+        // ── ② 已经同时勾上的：给提示（这种情况多半来自模板或手改的 settings.json，不替用户取消） ──
         var selected = Components.Where(c => c.IsSelected).Select(c => c.Kind);
         foreach (var conflict in ComponentCatalog.FindTitleConflicts(selected))
         {
             foreach (var kind in conflict.Kinds)
             {
-                if (Components.FirstOrDefault(c => c.Kind == kind) is { } component)
+                if (Components.FirstOrDefault(c => c.Kind == kind) is not { } component)
                 {
-                    component.ConflictHintKey = "Component.Conflict.SameTitle";
+                    continue;
+                }
+
+                // 点名**另外那几个**：三方撞车时不能只说「与另一个冲突」。
+                component.SetConflictHint(
+                    "Component.Conflict.SameTitle",
+                    TitlesOf(conflict.Kinds.Where(other => other != kind)));
+            }
+        }
+
+        // ── ③ 互斥：某组里只要已经勾了一个，其余的就锁上（用户 2026-11-22 要求） ──
+        //
+        // 判据来自 ComponentCatalog.AllTitleGroups()，与冲突检测同源 —— 以后再加一个撞车组件，
+        // 这里不用改（也不用再写一遍「A 与 B 互斥」）。锁上了还要给原因，否则用户只看到灰掉的勾选框。
+        //
+        // ⚠️ 原因必须**点名**（用户 2026-11-22 追加要求）：「与另一个组件冲突」这种话用户没法照着操作，
+        // 他得知道是 ldn_mitm 还是 usb-botbase 挡着。
+        //
+        // 只写在**被锁的那一张**上，不往勾着的那张加提示：那种状态是正常的，
+        // 挂一条警告会让人以为自己做错了什么（而且「取消后提示必须全部清掉」那条护栏
+        // 正是为了不让提示说谎，两边都写就把一个正常状态也变成了「有冲突警告」）。
+        foreach (var group in ComponentCatalog.AllTitleGroups())
+        {
+            var chosen = group.Kinds
+                .Where(kind => Components.FirstOrDefault(c => c.Kind == kind)?.IsSelected == true)
+                .ToList();
+
+            if (chosen.Count != 1)
+            {
+                // 0 个 = 谁都没选，都该能勾；≥2 个 = 上面已经给过冲突提示，不擅自取消用户的勾
+                continue;
+            }
+
+            var chosenTitle = TitlesOf([chosen[0]]);
+            foreach (var kind in group.Kinds.Where(kind => kind != chosen[0]))
+            {
+                if (Components.FirstOrDefault(c => c.Kind == kind) is { } other)
+                {
+                    other.IsSelectable = false;
+                    other.SetLockHint(MutualExclusionLockKey, chosenTitle);
                 }
             }
         }
     }
+
+    /// <summary>把组件枚举换成**卡片上那个名字**（会跟着界面语言变）。</summary>
+    private string[] TitlesOf(IEnumerable<ComponentKind> kinds) => kinds
+        .Select(kind => Components.FirstOrDefault(c => c.Kind == kind)?.Title)
+        .Where(title => !string.IsNullOrWhiteSpace(title))
+        .Select(title => title!)
+        .ToArray();
+
+    /// <summary>互斥锁的原因文案（也是「这把锁是不是我加的」的判据，见 <see cref="RefreshTitleConflicts"/>）。</summary>
+    private const string MutualExclusionLockKey = "Component.Conflict.Locked";
 
     private void RefreshLocalizedText()
     {

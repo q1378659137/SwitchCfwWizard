@@ -13,6 +13,8 @@ public sealed class ComponentViewModel : ObservableObject
     private bool _isSelectable = true;
     private string? _lockHintKey;
     private string? _conflictHintKey;
+    private string[] _lockHintTitles = [];
+    private string[] _conflictHintTitles = [];
     private double _progress;
     private string _status;
     private string _versionText = string.Empty;
@@ -104,6 +106,13 @@ public sealed class ComponentViewModel : ObservableObject
         get => _lockHintKey;
         set
         {
+            // 直接赋键（例如 Sys-patch 的强制锁）时把「点名的组件」清掉：
+            // 留着上一把锁的名字，会被填进新文案的 {0} 里，说出一个根本不相关的组件。
+            if (!string.Equals(_lockHintKey, value, StringComparison.Ordinal))
+            {
+                _lockHintTitles = [];
+            }
+
             if (SetProperty(ref _lockHintKey, value))
             {
                 OnPropertyChanged(nameof(LockHint));
@@ -112,12 +121,32 @@ public sealed class ComponentViewModel : ObservableObject
         }
     }
 
-    /// <summary>锁定原因的本地化文案（未锁定时为空串）。</summary>
-    public string LockHint => string.IsNullOrEmpty(_lockHintKey)
-        ? string.Empty
-        : LocalizationService.Instance[_lockHintKey];
+    /// <summary>
+    /// 锁定原因的本地化文案（未锁定时为空串）。
+    ///
+    /// 文案里的 <c>{0}</c> 会填上 <see cref="_lockHintTitles"/> —— 用户 2026-11-22 的要求：
+    /// 「与另一个组件冲突」太空，必须点名是**哪一个**（`ldn_mitm` / `sys-botbase` …）。
+    /// 名字取自卡片的 <see cref="Title"/>，所以切语言时这里跟着变（<see cref="RefreshLocalizedText"/> 会重发通知）。
+    /// </summary>
+    public string LockHint => Compose(_lockHintKey, _lockHintTitles);
 
     public bool HasLockHint => !string.IsNullOrEmpty(_lockHintKey);
+
+    /// <summary>
+    /// 设置锁定原因。<paramref name="titles"/> 是要点名的组件（填进文案的 <c>{0}</c>）；
+    /// <paramref name="key"/> 传 <c>null</c> 表示解除锁定。
+    ///
+    /// 走方法而不是直接赋 <see cref="LockHintKey"/>，是因为「键没变、名字变了」时
+    /// 属性 setter 的 <c>SetProperty</c> 不会发通知 —— 那样界面上会留着上一个名字。
+    /// </summary>
+    internal void SetLockHint(string? key, params string[] titles)
+    {
+        _lockHintKey = key;
+        _lockHintTitles = titles;
+        OnPropertyChanged(nameof(LockHintKey));
+        OnPropertyChanged(nameof(LockHint));
+        OnPropertyChanged(nameof(HasLockHint));
+    }
 
     /// <summary>
     /// 「这个组件和另一个勾了的组件装同一个 sysmodule title」的提示（多语言 key，为空表示不冲突）。
@@ -130,6 +159,11 @@ public sealed class ComponentViewModel : ObservableObject
         get => _conflictHintKey;
         set
         {
+            if (!string.Equals(_conflictHintKey, value, StringComparison.Ordinal))
+            {
+                _conflictHintTitles = [];
+            }
+
             if (SetProperty(ref _conflictHintKey, value))
             {
                 OnPropertyChanged(nameof(ConflictHint));
@@ -138,12 +172,25 @@ public sealed class ComponentViewModel : ObservableObject
         }
     }
 
-    /// <summary>冲突提示的本地化文案（不冲突时为空串）。</summary>
-    public string ConflictHint => string.IsNullOrEmpty(_conflictHintKey)
-        ? string.Empty
-        : LocalizationService.Instance[_conflictHintKey];
+    /// <summary>冲突提示的本地化文案（不冲突时为空串）。占位符规则同 <see cref="LockHint"/>。</summary>
+    public string ConflictHint => Compose(_conflictHintKey, _conflictHintTitles);
 
     public bool HasConflictHint => !string.IsNullOrEmpty(_conflictHintKey);
+
+    /// <summary>设置冲突提示（语义同 <see cref="SetLockHint"/>）。</summary>
+    internal void SetConflictHint(string? key, params string[] titles)
+    {
+        _conflictHintKey = key;
+        _conflictHintTitles = titles;
+        OnPropertyChanged(nameof(ConflictHintKey));
+        OnPropertyChanged(nameof(ConflictHint));
+        OnPropertyChanged(nameof(HasConflictHint));
+    }
+
+    /// <summary>
+    /// 取文案并填空（实现在 <see cref="HintText.Compose"/> —— 那里是纯函数，回归能直接测）。
+    /// </summary>
+    private static string Compose(string? key, string[] titles) => HintText.Compose(key, titles);
 
     public bool IsExpandedByDefault => IsSelected;
 

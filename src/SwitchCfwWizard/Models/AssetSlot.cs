@@ -101,11 +101,13 @@ public sealed class AssetSlot
     /// 这个槽装的是哪个 **sysmodule title**（<c>atmosphere/contents/&lt;16 位十六进制&gt;</c> 的那个 ID）。
     ///
     /// ⚠️ 为空表示的是「**未声明、不参与 title 冲突检测**」，**不是**「这个包不是 sysmodule」。
-    /// 两者的区别是真实存在的：组件类里的 `SysClk` / `SysDvr` / `LdnMitm` 都是 sysmodule 却没声明；
+    /// 两者的区别是真实存在的：组件类里的 `SysClk` / `SysDvr` 都是 sysmodule 却没声明；
     /// 「Ultrahand插件」里的 emuiibo（`0100000000000352`）同理，而 KeyX 装了**两个** title
     /// （`0100000000251020` + `4100000002025924`），单值字段根本表达不了 —— 写一个就是半个真话。
     ///
-    /// 现有约定：**只声明「冲突可预期」的那些**（botbase 那一对 + 用了通用 title 的 sys-ticon）。
+    /// 现有约定：**只声明「冲突可预期」的那些**（botbase 那一对 + 用了通用 title 的 sys-ticon
+    /// + 2026-11-22 起声明了 `4200000000000010` 的 ldn_mitm 与 RoomCircuit LANywhere ——
+    /// 那两个必然互相覆盖，必须让界面互斥）。
     /// ⏳ 若要把约定收紧成「所有 sysmodule 都必须声明」，得先把这个字段改成**多值**，
     /// 那时 <see cref="ComponentCatalog.FindTitleConflicts"/>、护栏 ⑨、那张实测对照表要一起动。
     ///

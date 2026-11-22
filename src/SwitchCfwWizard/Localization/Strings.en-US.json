@@ -59,7 +59,7 @@
   "Component.SysPatch.ForcedHint": "Force-enabled because serial blanking is selected: blanking invalidates the console certificates, so Sys-patch is required for the system to boot.",
   "Component.Firmware.Name": "Offline firmware",
   "Component.Firmware.Desc": "The system firmware itself (THZoria/NX_Firmware), extracted into out/Firmware/<firmware name>/. About 340 MB — tick it only when you really mean to update or repair the system.",
-  "Component.Conflict.SameTitle": "⚠️ Conflicts with another selected component: both install the same system module, so only one can be kept.",
+  "Component.Conflict.SameTitle": "⚠️ Conflicts with “{0}”: both install the same system module, so only one can be kept.",
   "Component.Breeze.Desc": "Breeze-Beta save editor. The whole archive is extracted into the out root.",
   "Component.Dbi.Desc": "DBI installer. DBI.nro goes to switch/DBI/, and the translation file is picked by UI language (zhcn for Simplified, zhtw for Traditional, en otherwise) and saved as translation.bin.",
   "Component.EdiZonOverlay.Desc": "EdiZon overlay: cheats and save editing. The whole archive is extracted into the out root.",
@@ -670,6 +670,7 @@
   "SdReset.Mode.CreateEmuFiles": "Create the files emuMMC needs",
   "SdReset.Mode.CreateEmuFiles.Hint": "Writes the package files onto the card (bootloader/ns-toolbox and payload.bin); it creates emuMMC on next boot. The partition table is untouched.",
   "Common.No": "No",
+  "Common.ListSeparator": ", ",
   "SdReset.Prepare.EmuTitle": "Components required to rebuild emuMMC",
   "SdReset.Surgery.Wipe": "Keeps the current partition table: only the first 16 MiB of the hidden emuMMC partition is zeroed. Files in the main partition are untouched.",
   "SdReset.Surgery.WipeSummary": "Scope: zero the first 16 MiB of the hidden emuMMC partition\nKept: the partition table and every file in the main partition",
@@ -721,5 +722,8 @@
   "App.Template.MissingOption": "Option \"{0}\" from the template does not exist in this version; skipped.",
   "Template.Play": "Online play",
   "Template.Study": "Study",
-  "AutoEmu.Error.Timeout": "Timed out after {0} s while looking up the package version. Raise the timeout under Advanced settings, or check the proxy / mirror."
+  "AutoEmu.Error.Timeout": "Timed out after {0} s while looking up the package version. Raise the timeout under Advanced settings, or check the proxy / mirror.",
+  "Component.RoomCircuitLanywhere.Name": "RoomCircuit LANywhere",
+  "Component.RoomCircuitLanywhere.Desc": "Self-hosted LAN play. Installs sysmodule 4200000000000010 plus its homebrew and overlay under switch/RoomCircuit; only the atmosphere and switch folders are merged into out. Mutually exclusive with ldn_mitm (same sysmodule) - pick one.",
+  "Component.Conflict.Locked": "Already selected: “{0}” — both install the same system module, so clear “{0}” first to tick this one."
 }

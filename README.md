@@ -215,6 +215,10 @@ dotnet publish -c Release -r win-x64 --self-contained true -o ../../dist
 > **`sys-botbase` 与 `usb-botbase` 只能二选一**。两者装的是**同一个系统模块**（`atmosphere/contents/430000000000000B/`），同时勾选会互相覆盖 —— 卡片上会给出提示，生成后的完整性校验也会直接报错。
 >
 > 这个判据不是「把这两个名字写死成互斥」，而是各插件自己声明的**系统模块 ID** 之间的比较：将来再有插件撞上同一个 ID，不用改代码就会自动被认出来。
+>
+> 提示**会点名具体是哪个插件**（2026-11-22）：勾了 `sys-botbase` 之后，`usb-botbase` 那张卡片上是
+> 「已经勾选了与它冲突的『sys-botbase』……先取消 sys-botbase 才能勾这个」，而不是只说「与另一个组件冲突」。
+> 名字取自卡片标题，所以切语言时会跟着变；两个都勾着（老存档 / 模板带进来的）时，两边互相点名。
 
 **主题**组（3 个）：
 
@@ -276,10 +280,21 @@ dotnet publish -c Release -r win-x64 --self-contained true -o ../../dist
 | wiliwili | [xfangfang/wiliwili](https://github.com/xfangfang/wiliwili/releases) | `wiliwili-NintendoSwitch.zip`，**只取包内的 `wiliwili.nro`** → `switch/wiliwili/` |
 | Moonlight-Switch | [XITRIX/Moonlight-Switch](https://github.com/XITRIX/Moonlight-Switch/releases) | `Moonlight-Switch.nro` → `switch/Moonlight-Switch/` |
 | TriPlayer | [tallbl0nde/TriPlayer](https://github.com/tallbl0nde/TriPlayer/releases) | `triplayer-x.x.x.zip` → `out/` 根 |
+| RoomCircuit LANywhere | [SEc-123/Roomcircuit_lanywhere-selfhost](https://github.com/SEc-123/Roomcircuit_lanywhere-selfhost/releases) | `switch-online-x.x.x-sd.zip` → `out/` 根（只取 `atmosphere/`、`switch/`，包根那两个说明文件不拷）<br>⚠️ 与 **ldn_mitm 互斥**（都用 sysmodule `4200000000000010`） |
+
+> **RoomCircuit LANywhere（2026-11-22 新增）几个实测结论**（v0.9.8）：
+> - Release 里 7 个资源，其中 `switch-online-0.9.8-sd.zip`（2,563,769 字节）是完整 SD 包 ——
+>   顶层 `atmosphere/` + `switch/` + `GAMES.txt` + `README.txt`；`-hats.zip` 与 `switch-online-integration.zip`
+>   **逐字节相同**（md5 `f8bbc68c…`），只有前两个目录；`-sdk-sources.tar` 有 **169 MB**（源码包，绝不能默认下它）。
+>   默认取 `-sd` 那一版，两个说明文件由 `MergeSkip` 挡在 `out/` 外面。
+> - 包里 `atmosphere/contents/4200000000000010/` 与 **ldn_mitm 是同一个 title**（两个包都实测过），
+>   所以两边都声明 `SysmoduleTitleId` → **勾了一个，另一个的勾选框会被锁上**并写明原因；
+>   真要换，先把当前那个取消。若两个都是勾着的（老存档/模板），只给「同一个系统模块」的提示、不擅自替用户取消。
+> - 下载目录是 `download/Roomcircuit_lanywhere_selfhost/`（用户指定，不是枚举名 —— 见 `ConfigGenerator.FolderName`）。
 
 > 落点分两类，判据是**包内结构**（2026-09-18 逐包实测，用 HTTP Range 只取 ZIP 中央目录拿到的完整条目清单）：
 > ① 包内已以 SD 卡根为基准（`switch/…` 或根目录散文件）⇒ 不声明 `Extract`、不声明落点，整棵铺 `out/` 根
-> （AtmoXL / Awoo / linkalho / TriPlayer）；
+> （AtmoXL / Awoo / linkalho / TriPlayer / RoomCircuit LANywhere）；
 > ② 上游只发散装 `.nro`（90DNS / Moonlight）或只该取其中一个文件（wiliwili）⇒ 显式声明落点。
 > 回归里对这两类各有一条断言钉住，并且用**实测的真实包内条目名**喂给 `ExtractPlan.Map` 验证筛选真的对。
 >
@@ -1185,7 +1200,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\pack-source.ps1 -List 
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\pack-source.ps1 -Out D:\bak  # 换输出目录
 ```
 
-产物是 `publish/source/SwitchCFWizard-<版本>-src.zip`（当前 **130 个文件 / 解压 2.68 MB → 压缩后 958 KB**）。
+产物是 `publish/source/SwitchCFWizard-<版本>-src.zip`（当前 **135 个文件 / 解压 2.78 MB → 压缩后 993 KB**）。
 包内**自带一个顶层目录**（解压不会散落一地）和一份 `_SOURCE-INFO.txt`：版本、打包时间、内容概览、
 **这一轮跳过了什么**、以及拿到包之后怎么构建 / 跑回归。
 

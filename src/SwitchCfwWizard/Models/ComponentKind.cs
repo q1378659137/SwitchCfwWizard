@@ -81,4 +81,13 @@ public enum ComponentKind
     Wiliwili,
     Moonlight,
     TriPlayer,
+
+    /// <summary>
+    /// RoomCircuit LANywhere 自建联机（局域网联机服务端 + 覆盖层）。
+    ///
+    /// 它带一个 sysmodule（<c>4200000000000010</c>）—— 与 <c>LdnMitm</c> **同一个 title**，
+    /// 所以两者互斥（见 <c>AssetSlot.SysmoduleTitleId</c> 与界面上的「先取消那个才能勾这个」）。
+    /// 下载目录名不是枚举名，见 <c>ConfigGenerator.FolderName</c>。
+    /// </summary>
+    RoomCircuitLanywhere,
 }

@@ -59,7 +59,8 @@
     "Dns90Tester": false,
     "Wiliwili": false,
     "Moonlight": false,
-    "TriPlayer": false
+    "TriPlayer": false,
+    "RoomCircuitLanywhere": false
   },
   "BootStock": true,
   "BootSysNand": true,
@@ -147,7 +148,7 @@
     "Hekate/jcdisable": "0",
     "Hekate/jcforceright": "0",
     "Hekate/bpmpclock": "1",
-    "Ultrahand/key_combo": "L\u002BDDOWN",
+    "Ultrahand/key_combo": "L+DDOWN",
     "Ultrahand/default_lang": "auto",
     "Ultrahand/custom_overlay_memory_MB": "",
     "Ultrahand/installMode": "sdout",

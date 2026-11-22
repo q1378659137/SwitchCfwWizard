@@ -59,7 +59,7 @@
   "Component.SysPatch.ForcedHint": "已因勾选「屏蔽序列号」强制启用：屏蔽序列号会让证书失效，必须靠 Sys-patch 补签名校验，否则系统起不来。",
   "Component.Firmware.Name": "离线固件",
   "Component.Firmware.Desc": "系统固件本体（THZoria/NX_Firmware），解压到 out/Firmware/固件名/。约 340 MB，只在你确实要升级或修复系统时才勾。",
-  "Component.Conflict.SameTitle": "⚠️ 与另一个已勾选的组件装的是同一个系统模块，两者会互相覆盖，只能留一个。",
+  "Component.Conflict.SameTitle": "⚠️ 与「{0}」装的是同一个系统模块，两者会互相覆盖，只能留一个。",
   "Component.Breeze.Desc": "存档修改器（Breeze-Beta）。整包解压到 out 根目录。",
   "Component.Dbi.Desc": "DBI 安装器。DBI.nro 放到 switch/DBI/，翻译文件按界面语言取（简体 zhcn / 繁体 zhtw / 其它 en），落盘后统一叫 translation.bin。",
   "Component.EdiZonOverlay.Desc": "EdiZon 叠加层：金手指与存档编辑。整包解压到 out 根目录。",
@@ -670,6 +670,7 @@
   "SdReset.Mode.CreateEmuFiles": "创建 emuMMC 所需文件",
   "SdReset.Mode.CreateEmuFiles.Hint": "把组件包里的文件写到卡上（bootloader/ns-toolbox 与 payload.bin），下次开机由它创建 emuMMC。不改分区表。",
   "Common.No": "否",
+  "Common.ListSeparator": "、",
   "SdReset.Prepare.EmuTitle": "重建 emuMMC 所需的组件包",
   "SdReset.Surgery.Wipe": "保留现有分区表：只把隐藏 emuMMC 分区的前 16 MiB 清空，主数据分区里的文件不动。",
   "SdReset.Surgery.WipeSummary": "操作范围：清空 emuMMC 隐藏分区的前 16 MiB\n保留：分区表与主数据分区内的全部文件",
@@ -721,5 +722,8 @@
   "App.Template.MissingOption": "模板里的选项「{0}」在当前版本里不存在，已跳过。",
   "Template.Play": "联机",
   "Template.Study": "学习",
-  "AutoEmu.Error.Timeout": "查询组件包版本超时（{0} 秒没有响应）。可以在「高级设置 → 网络超时」调大，或检查代理 / 镜像站。"
+  "AutoEmu.Error.Timeout": "查询组件包版本超时（{0} 秒没有响应）。可以在「高级设置 → 网络超时」调大，或检查代理 / 镜像站。",
+  "Component.RoomCircuitLanywhere.Name": "RoomCircuit LANywhere",
+  "Component.RoomCircuitLanywhere.Desc": "局域网联机（自建服务端）。装系统模块 4200000000000010，配套的 homebrew 与覆盖层在 switch/RoomCircuit；整包解压后只把 atmosphere、switch 两个目录放进 out。与 ldn_mitm 互斥（用同一个系统模块），两个只能选一个。",
+  "Component.Conflict.Locked": "已经勾选了与它冲突的「{0}」（两者装的是同一个系统模块），先取消 {0} 才能勾这个。"
 }

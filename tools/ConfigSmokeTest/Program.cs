@@ -138,6 +138,8 @@ internal static class Program
         CheckZipExtraction();
         CheckMergeIntoOut();
         CheckMergeSkip();
+        CheckRoomCircuit();
+        CheckConflictHints();
         CheckFormatMainGuard();
         CheckTemplates();
         CheckEverySelectedComponentMergesIntoOut();
@@ -5933,6 +5935,222 @@ internal static class Program
     }
 
     /// <summary>
+    /// 新增组件 RoomCircuit LANywhere（2026-11-22）。
+    ///
+    /// 钉四件事，每一条都能独立失败：
+    /// ① 槽声明的地址 / 文件名通配 / 目录名 —— 目录名用户明确指定成
+    ///    <c>Roomcircuit_lanywhere_selfhost</c>（不是枚举名，所以必须在这里对账）；
+    /// ② 与 <c>ldn_mitm</c> 撞同一个 sysmodule title（<c>4200000000000010</c>）——
+    ///    两边都实测过（两个包里都是这个目录），不声明的话界面毫无提示、卡上却是后合并的赢；
+    /// ③ 用**真实的上游资源名**验证通配只挑中 <c>-sd.zip</c>：这个 Release 里同时有
+    ///    <c>-hats.zip</c> / <c>-sdk-sources.tar</c> / <c>-update.lup</c> / <c>-integration.zip</c>，
+    ///    挑错一个的后果是「下了 169 MB 源码包」或者「少两个目录」；
+    /// ④ sd 包里那两个说明文件不该进 out（<see cref="ComponentDefinition.MergeSkip"/>）。
+    /// </summary>
+    private static void CheckRoomCircuit()
+    {
+        Section("新增组件：RoomCircuit LANywhere（学习分类，与 ldn_mitm 互斥）");
+
+        var definition = ComponentCatalog.Get(ComponentKind.RoomCircuitLanywhere);
+
+        Assert(definition.Category == ComponentCategory.Learning,
+            $"应归到「学习」分类（实际 {definition.Category}）");
+        Assert(definition.Slots.Count == 1, $"应只有一个文件槽（实际 {definition.Slots.Count}）");
+
+        var slot = definition.Slots[0];
+        Assert(slot.Address(null).DisplayName == "SEc-123/Roomcircuit_lanywhere-selfhost",
+            $"默认仓库应为 SEc-123/Roomcircuit_lanywhere-selfhost（实际 {slot.Address(null).DisplayName}）");
+        Assert(slot.FileName(null) == "switch-online-x.x.x-sd.zip",
+            $"默认文件名模式应为 switch-online-x.x.x-sd.zip（实际 {slot.FileName(null)}）");
+        Assert(slot.SysmoduleTitleId == "4200000000000010",
+            $"应声明 sysmodule title 4200000000000010（实际 {slot.SysmoduleTitleId ?? "未声明"}）");
+
+        Assert(ConfigGenerator.FolderName(ComponentKind.RoomCircuitLanywhere) == "Roomcircuit_lanywhere_selfhost",
+            "下载目录必须是 Roomcircuit_lanywhere_selfhost（用户指定，见 ConfigGenerator.FolderName）");
+
+        Assert(definition.MergeSkip.Contains("GAMES.txt") && definition.MergeSkip.Contains("README.txt"),
+            "sd 包里的 GAMES.txt / README.txt 不该被合并进 out");
+
+        // ② 互斥：两边都声明了同一个 title
+        var roomSlot = ComponentCatalog.Get(ComponentKind.RoomCircuitLanywhere).Slots[0];
+        var ldnSlot = ComponentCatalog.Get(ComponentKind.LdnMitm).Slots[0];
+        Assert(roomSlot.SysmoduleTitleId == ldnSlot.SysmoduleTitleId,
+            "两个组件应声明同一个 sysmodule title，界面才能做成互斥");
+
+        var group = ComponentCatalog.AllTitleGroups().FirstOrDefault(g => g.TitleId == "4200000000000010");
+        Assert(group is not null
+               && group.Kinds.Contains(ComponentKind.LdnMitm)
+               && group.Kinds.Contains(ComponentKind.RoomCircuitLanywhere),
+            "AllTitleGroups() 里应有一组 {ldn_mitm, RoomCircuit}（界面按它加互斥锁）");
+
+        var both = ComponentCatalog.FindTitleConflicts(
+            [ComponentKind.LdnMitm, ComponentKind.RoomCircuitLanywhere]);
+        Assert(both.Count == 1 && both[0].Kinds.Count == 2, "两个都选时应报 1 条冲突（2 个组件）");
+
+        var single = ComponentCatalog.FindTitleConflicts([ComponentKind.RoomCircuitLanywhere]);
+        Assert(single.Count == 0, "只选一个时不应该报冲突");
+
+        // ③ 真实资源名 → 通配必须只挑中 -sd.zip
+        var release = new ReleaseInfo(
+            "v0.9.8",
+            "0.9.8",
+            false,
+            DateTimeOffset.Now,
+            "https://github.com/SEc-123/Roomcircuit_lanywhere-selfhost/releases/tag/v0.9.8",
+            [
+                new ReleaseAsset("SHA256SUMS.txt", "https://example/1", 585),
+                new ReleaseAsset("switch-online-0.9.8-hats.zip", "https://example/2", 2554320),
+                new ReleaseAsset("switch-online-0.9.8-sd.zip", "https://example/3", 2563769),
+                new ReleaseAsset("switch-online-0.9.8-sdk-sources.tar", "https://example/4", 169830400),
+                new ReleaseAsset("switch-online-0.9.8-update.lup", "https://example/5", 2539736),
+                new ReleaseAsset("switch-online-integration.zip", "https://example/6", 2554320),
+            ]);
+
+        var match = AssetNameMatcher.Find(release, slot.FileName(null));
+        Assert(match is not null, "应能在这个 Release 里找到匹配的资源");
+        Assert(match!.Asset.Name == "switch-online-0.9.8-sd.zip",
+            $"应挑中 -sd.zip（实际 {match.Asset.Name}）");
+        Assert(match.Kind == AssetMatchKind.Wildcard,
+            $"应走「按模式命中」而不是猜（实际 {match.Kind}）");
+    }
+
+    /// <summary>
+    /// 冲突提示必须**点名**具体插件（用户 2026-11-22：「不要这么笼统的说」）。
+    ///
+    /// 覆盖两层，缺一层都测不出来：
+    ///   ① **文案层** —— 三份语言包里那三条冲突提示都得带 <c>{0}</c>。漏掉的那份不会报错、
+    ///      翻译也读得通，只是界面上永远显示「与另一个组件冲突」；这正是要修的那句话。
+    ///   ② **界面层** —— 真的勾一次，看锁提示里点的是不是**对方的名字**，而且两个方向都要试
+    ///      （勾 A 时 B 里写 A，勾 B 时 A 里写 B）—— 只测一个方向的话，写反了照样过。
+    ///
+    /// 组件对**不写死**：遍历 <see cref="ComponentCatalog.AllTitleGroups"/>，以后再加撞车的组件
+    /// 自动被这条覆盖（写死一对的话，下一个撞车组件就是新的漏网之鱼）。
+    /// </summary>
+    private static void CheckConflictHints()
+    {
+        Section("冲突提示要点名具体插件（不能只说「另一个组件」）");
+
+        string[] hintKeys =
+        [
+            "Component.Conflict.Locked",
+            "Component.Conflict.SameTitle",
+        ];
+
+        // ① 三份语言包的占位符
+        var noPlaceholder = new List<string>();
+        foreach (var code in new[] { "zh-Hans", "zh-Hant", "en-US" })
+        {
+            LocalizationService.Instance.SetLanguage(code);
+            foreach (var key in hintKeys)
+            {
+                var text = LocalizationService.Instance[key];
+                if (!text.Contains("{0}"))
+                {
+                    noPlaceholder.Add($"{code}/{key}");
+                }
+            }
+        }
+
+        Assert(noPlaceholder.Count == 0,
+            "冲突提示的文案必须带 {0} 占位符（否则界面上永远只说「另一个组件」）"
+            + (noPlaceholder.Count == 0 ? "" : "，缺：" + string.Join("、", noPlaceholder)));
+
+        // ② 填空：名字要出现、占位符要消失、多个名字要用**语言包里的**分隔符连
+        foreach (var code in new[] { "zh-Hans", "zh-Hant", "en-US" })
+        {
+            LocalizationService.Instance.SetLanguage(code);
+
+            var ldn = ComponentCatalog.ResolveComponentTitle(ComponentCatalog.Get(ComponentKind.LdnMitm));
+            var room = ComponentCatalog.ResolveComponentTitle(
+                ComponentCatalog.Get(ComponentKind.RoomCircuitLanywhere));
+            var separator = LocalizationService.Instance["Common.ListSeparator"];
+
+            var locked = HintText.Compose("Component.Conflict.Locked", [ldn]);
+            Assert(locked.Contains(ldn) && !locked.Contains("{0}"),
+                $"{code}：锁定提示要点名 ldn_mitm（实际「{locked}」）");
+
+            var same = HintText.Compose("Component.Conflict.SameTitle", [ldn, room]);
+            Assert(same.Contains(ldn + separator + room) && !same.Contains("{0}"),
+                $"{code}：两个名字要用语言包的分隔符连起来（实际「{same}」）");
+        }
+
+        LocalizationService.Instance.SetLanguage("zh-Hans");
+
+        // 不带名字的提示（Sys-patch 的强制锁）要原样返回 —— 别为了填空把文案里的花括号吃掉
+        var forcedTemplate = LocalizationService.Instance["Component.SysPatch.ForcedHint"];
+        Assert(HintText.Compose("Component.SysPatch.ForcedHint", []) == forcedTemplate,
+            "没有占位参数时文案要原样返回");
+        Assert(HintText.Compose(null, ["x"]) == string.Empty, "key 为空时应返回空串");
+
+        // ③ 界面层：每组 title 冲突都真勾一遍，两边的提示都要点名
+        var path = SettingsStore.FilePath;
+        var backup = File.Exists(path) ? File.ReadAllText(path) : null;
+
+        try
+        {
+            var vm = new MainViewModel();
+            var checkedGroups = 0;
+
+            foreach (var group in ComponentCatalog.AllTitleGroups())
+            {
+                var cards = group.Kinds
+                    .Select(kind => vm.Components.FirstOrDefault(c => c.Kind == kind))
+                    .Where(card => card is not null)
+                    .Select(card => card!)
+                    .ToList();
+
+                if (cards.Count < 2)
+                {
+                    continue;
+                }
+
+                // 先把整组清空，免得老存档里的勾选把状态带进来
+                foreach (var card in cards)
+                {
+                    card.IsSelected = false;
+                }
+
+                var winner = cards[0];
+                var loser = cards[1];
+                winner.IsSelected = true;
+
+                Assert(!loser.IsSelectable,
+                    $"{group.TitleId}：勾了 {winner.Title} 之后 {loser.Title} 应被锁住");
+                Assert(loser.LockHint.Contains(winner.Title),
+                    $"{group.TitleId}：{loser.Title} 的锁提示要点名「{winner.Title}」"
+                    + $"（实际「{loser.LockHint}」）");
+
+                // 反过来再勾一次，确认不是碰巧对上了
+                winner.IsSelected = false;
+                loser.IsSelected = true;
+                Assert(!winner.IsSelectable && winner.LockHint.Contains(loser.Title),
+                    $"{group.TitleId}：反过来勾 {loser.Title}，{winner.Title} 的锁提示也要点名"
+                    + $"（实际「{winner.LockHint}」）");
+
+                loser.IsSelected = false;
+                checkedGroups++;
+            }
+
+            Assert(checkedGroups >= 2,
+                $"应至少覆盖 2 组互斥组件（botbase 一对 + ldn_mitm/RoomCircuit，实际 {checkedGroups} 组）");
+        }
+        finally
+        {
+            if (backup is null)
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            else
+            {
+                File.WriteAllText(path, backup);
+            }
+        }
+    }
+
+    /// <summary>
     /// 「仅格式化主数据分区」那两条写盘规则（2026-11-21 用户实测踩了两次）。
     ///
     /// 第一次的坑：把 <c>SdDisks.ReadLayout</c> 返回的**结构体**当 MBR 递进去 → 「引导扇区签名不对」。
@@ -6089,7 +6307,7 @@ internal static class Program
         var loc = LocalizationService.Instance;
         Assert(playTemplate.Name == loc["Template.Play"],
             $"play 的显示名应取 Template.Play（实际「{playTemplate.Name}」）");
-        Assert(studyTemplate.Name == loc["Template.Study"],
+        Assert(studyTemplate!.Name == loc["Template.Study"],
             $"study 的显示名应取 Template.Study（实际「{studyTemplate.Name}」）");
 
         var play = TemplateStore.Load(playTemplate);
@@ -8045,7 +8263,7 @@ internal static class Program
             [ComponentKind.QuickNtp] = "",
             [ComponentKind.KeyX] = "",
 
-            // 「学习」7 个 —— 两类落点，判据是**包内结构**（2026-09-18 逐包实测，用 HTTP Range
+            // 「学习」8 个 —— 两类落点，判据是**包内结构**（2026-09-18 逐包实测，用 HTTP Range
             // 只取 ZIP 中央目录拿到的完整条目清单）：
             //   ① 包内已以 SD 卡根为基准 → 铺 out 根（空串）；
             //   ② 上游只发散装 .nro，或只该取其中一个文件 → 显式落点。
@@ -8056,6 +8274,9 @@ internal static class Program
             [ComponentKind.Dns90Tester] = "switch/Switch_90DNS_tester",   // 散装 .nro
             [ComponentKind.Wiliwili] = "switch/wiliwili",                 // 包里只取 wiliwili.nro
             [ComponentKind.Moonlight] = "switch/Moonlight-Switch",        // 散装 .nro
+            // 实测 v0.9.8 的 switch-online-0.9.8-sd.zip：顶层就是 atmosphere/ + switch/
+            // （另有两个说明文件 GAMES.txt / README.txt，由 MergeSkip 挡在 out 外面）。
+            [ComponentKind.RoomCircuitLanywhere] = "",
         };
 
         // 覆盖性：表里的组件集合必须**恰好**等于「所有用文件槽声明的组件」。
@@ -8405,6 +8626,11 @@ internal static class Program
             // 将来别的 homebrew sysmodule 撞上它是**真冲突**，规则照样该报出来 —— 别因为它「通用」
             // 就把它从表里拿掉。
             [ComponentKind.SysTicon] = "00FF747765616BFF",
+            // 实测（2026-11-22）：ldn_mitm_FW_23.5.0.zip 与 switch-online-0.9.8-sd.zip
+            // 包里**都是** atmosphere/contents/4200000000000010/ —— 两个都勾必然互相覆盖，
+            // 所以这一对既要在声明里写，也要在这张实测表里各占一行。
+            [ComponentKind.LdnMitm] = "4200000000000010",
+            [ComponentKind.RoomCircuitLanywhere] = "4200000000000010",
         };
 
         var titledKinds = titled.Select(x => x.Kind).ToHashSet();

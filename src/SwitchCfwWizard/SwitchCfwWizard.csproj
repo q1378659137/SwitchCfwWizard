@@ -21,7 +21,7 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyTitle>Switch CFW Wizard</AssemblyTitle>
     <Product>Switch CFW Wizard</Product>
-    <Version>0.2.1</Version>
+    <Version>0.2.2</Version>
     <FileVersion>0.1.0.0</FileVersion>
     <NeutralLanguage>zh-Hans</NeutralLanguage>
     <DebugType>embedded</DebugType>

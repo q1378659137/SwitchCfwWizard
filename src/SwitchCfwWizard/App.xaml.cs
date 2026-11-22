@@ -651,6 +651,72 @@ public partial class App : Application
                 + templateFullDetail + "）");
         }
 
+        // ── 新增组件 RoomCircuit LANywhere + 与 ldn_mitm 的互斥（2026-11-22）──
+        // 用户要求：勾选其中一个时另一个无法再勾。这里真的拨一次勾选再看 IsSelectable / 锁定原因，
+        // 跑完把两个组件的勾选状态还原 —— 自检不能改用户的配置。
+        var selfCards = (window.DataContext as MainViewModel)?.Components;
+        var roomCard = selfCards?.FirstOrDefault(c => c.Kind == ComponentKind.RoomCircuitLanywhere);
+        var ldnCard = selfCards?.FirstOrDefault(c => c.Kind == ComponentKind.LdnMitm);
+        var roomCircuitOk = false;
+        var exclusiveOk = false;
+        var exclusiveDetail = "skipped";
+
+        if (roomCard is not null && ldnCard is not null)
+        {
+            roomCircuitOk = !string.IsNullOrWhiteSpace(roomCard.Title)
+                            && !string.IsNullOrWhiteSpace(roomCard.Description);
+
+            var roomBefore = roomCard.IsSelected;
+            var ldnBefore = ldnCard.IsSelected;
+
+            try
+            {
+                ldnCard.IsSelected = false;
+                roomCard.IsSelected = false;
+
+                // 勾 ldn_mitm → RoomCircuit 应被锁住，且锁的原因里要**点名** ldn_mitm
+                // （用户 2026-11-22：「不要这么笼统的说」——只说「与另一个组件冲突」等于没说）
+                ldnCard.IsSelected = true;
+                var roomLocked = !roomCard.IsSelectable
+                                 && roomCard.LockHintKey == "Component.Conflict.Locked"
+                                 && roomCard.LockHint.Contains(ldnCard.Title);
+
+                // 文案要在**这一刻**抓下来：后面反过来勾 RoomCircuit 时这把锁就解了，
+                // 那时再读 roomCard.LockHint 只会得到空串（第一版就这么写，detail 里印出「」）。
+                var roomHintSample = roomCard.LockHint;
+
+                // 取消 ldn_mitm → RoomCircuit 应重新可选
+                ldnCard.IsSelected = false;
+                var roomUnlocked = roomCard.IsSelectable;
+
+                // 反过来：勾 RoomCircuit → ldn_mitm 被锁，同样要点名 RoomCircuit
+                roomCard.IsSelected = true;
+                var ldnLocked = !ldnCard.IsSelectable && ldnCard.LockHint.Contains(roomCard.Title);
+
+                exclusiveOk = roomLocked && roomUnlocked && ldnLocked;
+                exclusiveDetail =
+                    $"ldn→room_locked={roomLocked} unlock={roomUnlocked} room→ldn_locked={ldnLocked}"
+                    + $" named=「{roomHintSample}」";
+            }
+            finally
+            {
+                roomCard.IsSelected = roomBefore;
+                ldnCard.IsSelected = ldnBefore;
+            }
+        }
+
+        report.AppendLine($"SELFTEST: roomcircuit card={(roomCircuitOk ? "ok" : "bad")} exclusive={(exclusiveOk ? "ok" : "bad")} {exclusiveDetail}");
+
+        if (!roomCircuitOk)
+        {
+            themeProblems.Add("界面上找不到 RoomCircuit LANywhere 的卡片（或它没有标题/说明）");
+        }
+
+        if (!exclusiveOk)
+        {
+            themeProblems.Add("RoomCircuit 与 ldn_mitm 没有做成互斥（勾一个之后另一个还能勾）");
+        }
+
         // ── 与 Sys-patch 卡片逐项比对（用户 2026-09-22：「以 Sys-patch 那张卡片为准」）──
         // 「我写了 FontSize=14」证明不了什么 —— 直接拿**运行时那张卡片**当参照物：
         // 标题 / 说明 / 状态文字三项的字号、字重、前景色都要与它一致。

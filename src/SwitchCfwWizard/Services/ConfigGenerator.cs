@@ -1105,12 +1105,22 @@ public sealed class ConfigGenerator
         return total;
     }
 
+    /// <summary>
+    /// 下载/解压目录名（<c>download/&lt;这个名字&gt;/</c>）。
+    ///
+    /// 默认就是枚举名；四个框架组件与 RoomCircuit 另有约定名。
+    /// ⚠️ 改这里的值等于改**磁盘上的目录名**：已经下过的那份会变成孤儿（下次重新下 2.5 MB），
+    /// 所以「改名」要当成一次迁移，不能顺手改。
+    /// </summary>
     public static string FolderName(ComponentKind kind) => kind switch
     {
         ComponentKind.Atmosphere => "Atmosphere",
         ComponentKind.Hekate => "Hekate",
         ComponentKind.Ultrahand => "Ultrahand",
         ComponentKind.SysPatch => "Sys-patch",
+        // 用户 2026-11-22 指定：这个组件的资源放在 download/Roomcircuit_lanywhere_selfhost/ 下。
+        // 注意大小写与上游仓库名一致（枚举名是 RoomCircuitLanywhere，不能直接当目录名用）。
+        ComponentKind.RoomCircuitLanywhere => "Roomcircuit_lanywhere_selfhost",
         _ => kind.ToString(),
     };
 

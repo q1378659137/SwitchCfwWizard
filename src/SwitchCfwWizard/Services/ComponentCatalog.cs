@@ -399,6 +399,22 @@ public static class ComponentCatalog
     public static readonly RepoSpec TriPlayerRepo = new("tallbl0nde", "TriPlayer");
 
     /// <summary>
+    /// RoomCircuit LANywhere 自建联机（2026-11-22 新增）。
+    ///
+    /// 实测 v0.9.8 的 Release 里有 7 个资源，其中三个是 SD 用包：
+    /// <list type="bullet">
+    ///   <item><c>switch-online-0.9.8-sd.zip</c>（2,563,769 字节）= 完整 SD 包，顶层
+    ///   <c>atmosphere/</c> + <c>switch/</c> + <c>GAMES.txt</c> + <c>README.txt</c>（后两个是说明文件）；</item>
+    ///   <item><c>switch-online-0.9.8-hats.zip</c> 与 <c>switch-online-integration.zip</c>：两者**逐字节相同**
+    ///   （md5 <c>f8bbc68c9a013f068b82b45dea784753</c>），只有 <c>atmosphere/</c> + <c>switch/</c>。</item>
+    /// </list>
+    /// 选 <c>-sd</c> 那一版（用户 2026-11-22 指定 `switch-online-*-sd.zip`），两个说明文件靠
+    /// <see cref="ComponentDefinition.MergeSkip"/> 挡在 out 外面。
+    /// 另注意 <c>switch-online-*-sdk-sources.tar</c> 有 169 MB —— 那是源码包，谁也不会想默认下它。
+    /// </summary>
+    public static readonly RepoSpec RoomCircuitRepo = new("SEc-123", "Roomcircuit_lanywhere-selfhost");
+
+    /// <summary>
     /// linkalho 按界面语言取哪个仓库：中文（简繁都算）走汉化镜像 <c>SwitchScriptTW/linkalho</c>，
     /// 其余走上游 <c>impeeza/linkalho</c>。
     ///
@@ -2053,6 +2069,10 @@ public static class ComponentCatalog
                     Key = "LdnMitm",
                     Address = AssetSlot.Always(LdnMitmRepo),
                     FileName = AssetSlot.Always("ldn_mitm_FW_x.x.x.zip"),
+                    // 2026-11-22 补声明：实测 ldn_mitm_FW_23.5.0.zip 里就是
+                    // atmosphere/contents/4200000000000010/ —— 与 RoomCircuit LANywhere 撞同一个 title。
+                    // 之前这里没声明，所以两个都勾时界面毫无提示、卡上却是一份覆盖另一份。
+                    SysmoduleTitleId = "4200000000000010",
                 },
             ],
         },
@@ -2678,6 +2698,30 @@ public static class ComponentCatalog
                 },
             ],
         },
+
+        [ComponentKind.RoomCircuitLanywhere] = new ComponentDefinition
+        {
+            Kind = ComponentKind.RoomCircuitLanywhere,
+            Category = ComponentCategory.Learning,
+            Repos = [],
+            Options = [],
+            // sd 包里那两个说明文件不该跟着进 out（用户要的是 atmosphere + switch 两个目录）。
+            // 换成 hats / integration 那一版时这两个名字在包里根本不存在，跳不跳都一样。
+            MergeSkip = ["GAMES.txt", "README.txt"],
+            Slots =
+            [
+                new AssetSlot
+                {
+                    Key = "RoomCircuitLanywhere",
+                    Address = AssetSlot.Always(RoomCircuitRepo),
+                    // 上游按 `switch-online-<版本>-sd.zip` 命名，走通配。
+                    FileName = AssetSlot.Always("switch-online-x.x.x-sd.zip"),
+                    // 包里有 atmosphere/contents/4200000000000010/ —— 与 ldn_mitm **同一个 title**，
+                    // 两个都勾必然互相覆盖（实测两个包里都是这一个目录），所以两边都声明、界面互斥。
+                    SysmoduleTitleId = "4200000000000010",
+                },
+            ],
+        },
     };
 
     public static ComponentDefinition Get(ComponentKind kind) => Definitions[kind];
@@ -2728,6 +2772,27 @@ public static class ComponentCatalog
             .Where(conflict => conflict.Kinds.Count > 1)
             .ToList();
     }
+
+    /// <summary>
+    /// **所有**会撞同一个 title 的组件组（不看当前勾选）。
+    ///
+    /// 与 <see cref="FindTitleConflicts(IEnumerable{ComponentKind})"/> 的区别：那个只回答
+    /// 「当前这组勾选里有没有撞车」，这个回答「谁和谁天生就不能共存」——
+    /// 界面要靠它做**互斥**：勾了 A 就把 B 锁上（用户 2026-11-22：
+    /// 「勾选其一时另一个无法再次勾选」）。
+    /// 判据与冲突检测同源（都来自 <see cref="AssetSlot.SysmoduleTitleId"/>），不另写一份规则。
+    /// </summary>
+    public static IReadOnlyList<TitleConflict> AllTitleGroups() =>
+        All
+            .SelectMany(definition => definition.Slots
+                .Where(slot => !string.IsNullOrWhiteSpace(slot.SysmoduleTitleId))
+                .Select(slot => (definition.Kind, Title: slot.SysmoduleTitleId!)))
+            .GroupBy(entry => entry.Title, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new TitleConflict(
+                group.Key,
+                group.Select(entry => entry.Kind).Distinct().ToList()))
+            .Where(conflict => conflict.Kinds.Count > 1)
+            .ToList();
 
     /// <summary>
     /// 界面上的分类**顺序** —— 直接取枚举的声明序，不另写清单。
